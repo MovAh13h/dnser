@@ -1,0 +1,16 @@
+[package]
+name = "dnser"
+description = "A production-ready DNS server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["dns", "server", "networking", "resolver"]
+categories = ["command-line-utilities", "network-programming"]
+
+[[bin]]
+name = "dnser"
+path = "src/main.rs"

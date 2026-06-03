@@ -1,0 +1,14 @@
+[package]
+name = "dnser-zone"
+description = "Authoritative DNS zone loading and management"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+documentation = "https://docs.rs/dnser-zone"
+keywords = ["dns", "zone", "authoritative", "networking"]
+categories = ["network-programming", "parser-implementations"]
+

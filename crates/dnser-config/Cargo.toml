@@ -1,0 +1,14 @@
+[package]
+name = "dnser-config"
+description = "Configuration file parsing for dnser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+documentation = "https://docs.rs/dnser-config"
+keywords = ["dns", "config", "toml", "networking"]
+categories = ["network-programming", "parser-implementations"]
+

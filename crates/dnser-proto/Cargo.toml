@@ -1,0 +1,13 @@
+[package]
+name = "dnser-proto"
+description = "DNS wire format: packet parsing, serialization, record types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+documentation = "https://docs.rs/dnser-proto"
+keywords = ["dns", "protocol", "parser", "networking", "wire-format"]
+categories = ["network-programming", "encoding", "parser-implementations"]

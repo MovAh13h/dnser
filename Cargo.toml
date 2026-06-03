@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "crates/dnser",
+    "crates/dnser-proto",
+    "crates/dnser-server",
+    "crates/dnser-resolver",
+    "crates/dnser-cache",
+    "crates/dnser-zone",
+    "crates/dnser-config",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["Tanishq Jain <tanishqjain1002@gmail.com>"]
+repository = "https://github.com/MovAh13h/dnser"
+readme = "README.md"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = "warn"
