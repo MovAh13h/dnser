@@ -1,5 +1,8 @@
+use crate::error::ParseError;
 use crate::opcode::Opcode;
 use crate::rcode::Rcode;
+use crate::reader::Reader;
+use crate::writer::Writer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
@@ -18,6 +21,7 @@ impl Header {
     const TC: u16 = 0b0000_0010_0000_0000;
     const RD: u16 = 0b0000_0001_0000_0000;
     const RA: u16 = 0b0000_0000_1000_0000;
+    const Z: u16 = 0b0000_0000_0100_0000;
     const AD: u16 = 0b0000_0000_0010_0000;
     const CD: u16 = 0b0000_0000_0001_0000;
     const RCODE: u16 = 0b0000_0000_0000_1111;
@@ -60,6 +64,31 @@ impl Header {
 
     pub fn rcode(&self) -> Result<Rcode, u8> {
         Rcode::try_from((self.flags & Self::RCODE) as u8)
+    }
+
+    pub fn parse(r: &mut Reader) -> Result<Self, ParseError> {
+        let id = r.read_u16()?;
+        let flags = r.read_u16()?;
+        if flags & Self::Z != 0 {
+            return Err(ParseError::ReservedBitSet);
+        }
+        Ok(Self {
+            id,
+            flags,
+            qd_count: r.read_u16()?,
+            an_count: r.read_u16()?,
+            ns_count: r.read_u16()?,
+            ar_count: r.read_u16()?,
+        })
+    }
+
+    pub fn write(&self, w: &mut Writer) {
+        w.write_u16(self.id);
+        w.write_u16(self.flags);
+        w.write_u16(self.qd_count);
+        w.write_u16(self.an_count);
+        w.write_u16(self.ns_count);
+        w.write_u16(self.ar_count);
     }
 }
 

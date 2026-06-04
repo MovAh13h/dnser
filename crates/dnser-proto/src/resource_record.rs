@@ -1,6 +1,9 @@
 use crate::class::Class;
+use crate::error::{ParseError, WriteError};
 use crate::rdata::RData;
+use crate::reader::Reader;
 use crate::record_type::RecordType;
+use crate::writer::Writer;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceRecord {
@@ -11,7 +14,7 @@ pub struct ResourceRecord {
 }
 
 impl ResourceRecord {
-    pub fn record_type(&self) -> Result<RecordType, u16> {
+    fn record_type(&self) -> Result<RecordType, u16> {
         match &self.rdata {
             RData::A(_) => Ok(RecordType::A),
             RData::AAAA(_) => Ok(RecordType::AAAA),
@@ -25,11 +28,44 @@ impl ResourceRecord {
             RData::Unknown { rtype, .. } => Err(*rtype),
         }
     }
+
+    pub fn parse(r: &mut Reader) -> Result<Self, ParseError> {
+        let name = r.read_name()?;
+        let rtype = r.read_u16()?;
+        let class = Class::try_from(r.read_u16()?).map_err(ParseError::UnknownClass)?;
+        let ttl = r.read_u32()?;
+        let rdlen = r.read_u16()?;
+        let rdata = RData::parse(r, rtype, rdlen)?;
+        Ok(Self {
+            name,
+            class,
+            ttl,
+            rdata,
+        })
+    }
+
+    pub fn write(&self, w: &mut Writer) -> Result<(), WriteError> {
+        w.write_name(&self.name)?;
+        match self.record_type() {
+            Ok(rt) => w.write_u16(rt as u16),
+            Err(n) => w.write_u16(n),
+        }
+        w.write_u16(self.class as u16);
+        w.write_u32(self.ttl);
+        let rdlen_pos = w.reserve_u16();
+        let rdata_start = w.pos();
+        self.rdata.write(w)?;
+        let rdlen = (w.pos() - rdata_start) as u16;
+        w.backfill_u16(rdlen_pos, rdlen);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
+
+    use bytes::Bytes;
 
     use super::*;
 
@@ -67,7 +103,7 @@ mod tests {
         assert_eq!(
             record(RData::Unknown {
                 rtype: 99,
-                data: vec![]
+                data: Bytes::new(),
             })
             .record_type(),
             Err(99)

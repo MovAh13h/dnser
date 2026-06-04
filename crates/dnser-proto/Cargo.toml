@@ -11,3 +11,6 @@ readme.workspace = true
 documentation = "https://docs.rs/dnser-proto"
 keywords = ["dns", "protocol", "parser", "networking", "wire-format"]
 categories = ["network-programming", "encoding", "parser-implementations"]
+
+[dependencies]
+bytes = "1"
