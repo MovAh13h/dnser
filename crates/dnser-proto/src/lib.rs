@@ -3,4 +3,6 @@ pub mod header;
 pub mod opcode;
 pub mod question;
 pub mod rcode;
+pub mod rdata;
 pub mod record_type;
+pub mod resource_record;
