@@ -62,3 +62,68 @@ impl Header {
         Rcode::try_from((self.flags & Self::RCODE) as u8)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(flags: u16) -> Header {
+        Header {
+            id: 0,
+            flags,
+            qd_count: 0,
+            an_count: 0,
+            ns_count: 0,
+            ar_count: 0,
+        }
+    }
+
+    #[test]
+    fn qr_flag() {
+        let response = header(0b1000_0000_0000_0000);
+        let query = header(0b0000_0000_0000_0000);
+        assert!(response.is_response() && !response.is_query());
+        assert!(query.is_query() && !query.is_response());
+    }
+
+    #[test]
+    fn opcode_flag() {
+        let cases: &[(u16, Result<Opcode, u8>)] = &[
+            (0b0000_0000_0000_0000, Ok(Opcode::Query)),
+            (0b0000_1000_0000_0000, Ok(Opcode::IQuery)),
+            (0b0010_0000_0000_0000, Ok(Opcode::Notify)),
+            (0b0001_1000_0000_0000, Err(3)),
+        ];
+        for &(flags, expected) in cases {
+            assert_eq!(header(flags).opcode(), expected);
+        }
+    }
+
+    #[test]
+    fn single_bit_flags() {
+        let cases: &[(u16, fn(&Header) -> bool)] = &[
+            (0b0000_0100_0000_0000, Header::is_authoritative),
+            (0b0000_0010_0000_0000, Header::is_truncated),
+            (0b0000_0001_0000_0000, Header::recursion_desired),
+            (0b0000_0000_1000_0000, Header::recursion_available),
+            (0b0000_0000_0010_0000, Header::authentic_data),
+            (0b0000_0000_0001_0000, Header::checking_disabled),
+        ];
+        for &(flags, accessor) in cases {
+            assert!(accessor(&header(flags)));
+        }
+    }
+
+    #[test]
+    fn rcode_flag() {
+        let cases: &[(u16, Result<Rcode, u8>)] = &[
+            (0b0000_0000_0000_0000, Ok(Rcode::NoError)),
+            (0b0000_0000_0000_0011, Ok(Rcode::NXDomain)),
+            (0b0000_0000_0000_0101, Ok(Rcode::Refused)),
+            (0b0000_0000_0000_0110, Err(6)),
+        ];
+        for &(flags, expected) in cases {
+            assert_eq!(header(flags).rcode(), expected);
+        }
+    }
+}

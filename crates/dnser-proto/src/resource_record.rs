@@ -26,3 +26,51 @@ impl ResourceRecord {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use super::*;
+
+    fn record(rdata: RData) -> ResourceRecord {
+        ResourceRecord {
+            name: "example.com".to_string(),
+            class: Class::IN,
+            ttl: 300,
+            rdata,
+        }
+    }
+
+    #[test]
+    fn record_type_from_rdata() {
+        assert_eq!(
+            record(RData::A(Ipv4Addr::LOCALHOST)).record_type(),
+            Ok(RecordType::A)
+        );
+        assert_eq!(
+            record(RData::CNAME("alias.example.com".to_string())).record_type(),
+            Ok(RecordType::CNAME)
+        );
+        assert_eq!(
+            record(RData::MX {
+                preference: 10,
+                exchange: "mail.example.com".to_string()
+            })
+            .record_type(),
+            Ok(RecordType::MX)
+        );
+    }
+
+    #[test]
+    fn unknown_rdata_returns_err() {
+        assert_eq!(
+            record(RData::Unknown {
+                rtype: 99,
+                data: vec![]
+            })
+            .record_type(),
+            Err(99)
+        );
+    }
+}
