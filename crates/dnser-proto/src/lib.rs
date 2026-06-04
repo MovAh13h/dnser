@@ -1,5 +1,6 @@
 pub mod class;
 pub mod header;
+pub mod message;
 pub mod opcode;
 pub mod question;
 pub mod rcode;
