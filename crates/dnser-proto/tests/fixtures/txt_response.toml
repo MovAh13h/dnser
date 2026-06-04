@@ -1,0 +1,26 @@
+description = "TXT response for example.com with two string chunks: 'hello' and 'world'"
+
+# RDATA: two length-prefixed chunks
+#   05 68 65 6c 6c 6f = 5, "hello"
+#   05 77 6f 72 6c 64 = 5, "world"
+
+hex = """
+  33 33 81 80 00 01 00 01 00 00 00 00
+  07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  00 10 00 01
+  c0 0c 00 10 00 01 00 00 01 2c 00 0c
+  05 68 65 6c 6c 6f 05 77 6f 72 6c 64
+"""
+
+[expect]
+id = 0x3333
+qr = true
+rd = true
+qd_count = 1
+an_count = 1
+
+[[expect.answers]]
+name = "example.com"
+ttl = 300
+rtype = "TXT"
+txt_chunks = 2

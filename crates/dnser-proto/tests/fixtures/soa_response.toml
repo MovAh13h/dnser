@@ -1,0 +1,33 @@
+description = "SOA response for example.com (AA=1), MNAME and RNAME written uncompressed"
+
+# RDATA (56 bytes):
+#   MNAME: ns1.example.com  (17 bytes, uncompressed)
+#   RNAME: admin.example.com (19 bytes, uncompressed)
+#   SERIAL=1, REFRESH=3600, RETRY=900, EXPIRE=604800, MINIMUM=300
+
+hex = """
+  44 44 85 80 00 01 00 01 00 00 00 00
+  07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  00 06 00 01
+  c0 0c 00 06 00 01 00 00 01 2c 00 38
+  03 6e 73 31 07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  05 61 64 6d 69 6e 07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  00 00 00 01 00 00 0e 10 00 00 03 84 00 09 3a 80 00 00 01 2c
+"""
+
+[expect]
+id = 0x4444
+qr = true
+aa = true
+rd = true
+ra = true
+qd_count = 1
+an_count = 1
+
+[[expect.answers]]
+name = "example.com"
+ttl = 300
+rtype = "SOA"
+soa_mname = "ns1.example.com"
+soa_rname = "admin.example.com"
+soa_serial = 1

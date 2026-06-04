@@ -1,0 +1,28 @@
+description = "MX response for example.com, exchange name uses pointer compression"
+
+# RDATA: preference=10, exchange=mail.example.com
+#   04 6d 61 69 6c = "mail" label
+#   c0 0c = pointer to offset 12 (example.com)
+
+hex = """
+  22 22 81 80 00 01 00 01 00 00 00 00
+  07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  00 0f 00 01
+  c0 0c 00 0f 00 01 00 00 0e 10 00 09
+  00 0a 04 6d 61 69 6c c0 0c
+"""
+
+[expect]
+id = 0x2222
+qr = true
+rd = true
+ra = true
+qd_count = 1
+an_count = 1
+
+[[expect.answers]]
+name = "example.com"
+ttl = 3600
+rtype = "MX"
+mx_pref = 10
+mx_exchange = "mail.example.com"
