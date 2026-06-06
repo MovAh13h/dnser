@@ -10,7 +10,11 @@ impl Class {
     pub const ANY: Self = Self(255);
 
     pub fn is_known(self) -> bool {
-        self == Self::IN || self == Self::CS || self == Self::CH || self == Self::HS || self == Self::ANY
+        self == Self::IN
+            || self == Self::CS
+            || self == Self::CH
+            || self == Self::HS
+            || self == Self::ANY
     }
 }
 
