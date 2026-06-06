@@ -1,0 +1,26 @@
+description = "A record response for example.com, answer uses name compression pointer"
+
+hex = """
+  aa bb 81 80 00 01 00 01 00 00 00 00
+  07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  00 01 00 01
+  c0 0c 00 01 00 01 00 00 01 2c 00 04 5d b8 d8 22
+"""
+
+[expect]
+id = 0xaabb
+qr = true
+rd = true
+ra = true
+qd_count = 1
+an_count = 1
+
+[[expect.questions]]
+name = "example.com"
+qtype = "A"
+
+[[expect.answers]]
+name = "example.com"
+ttl = 300
+rtype = "A"
+ipv4 = "93.184.216.34"

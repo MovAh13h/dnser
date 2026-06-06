@@ -1,0 +1,28 @@
+description = "A response with two answers for example.com (round-robin), both names via pointer"
+
+hex = """
+  66 66 81 80 00 01 00 02 00 00 00 00
+  07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  00 01 00 01
+  c0 0c 00 01 00 01 00 00 01 2c 00 04 01 02 03 04
+  c0 0c 00 01 00 01 00 00 01 2c 00 04 05 06 07 08
+"""
+
+[expect]
+id = 0x6666
+qr = true
+rd = true
+qd_count = 1
+an_count = 2
+
+[[expect.answers]]
+name = "example.com"
+ttl = 300
+rtype = "A"
+ipv4 = "1.2.3.4"
+
+[[expect.answers]]
+name = "example.com"
+ttl = 300
+rtype = "A"
+ipv4 = "5.6.7.8"

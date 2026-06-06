@@ -11,3 +11,12 @@ readme.workspace = true
 documentation = "https://docs.rs/dnser-proto"
 keywords = ["dns", "protocol", "parser", "networking", "wire-format"]
 categories = ["network-programming", "encoding", "parser-implementations"]
+
+[dependencies]
+bytes = "1"
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+hickory-proto = "0.26"
+proptest = "1"

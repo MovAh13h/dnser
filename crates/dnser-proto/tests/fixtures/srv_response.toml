@@ -1,0 +1,33 @@
+description = "SRV response for _http._tcp.example.com, target uses pointer into question name"
+
+# Offset 0x17 (23) = start of "example" label in question name
+# target = "srv" + pointer(0x17) = "srv.example.com"
+# RDATA: priority=10, weight=20, port=80, target=srv.example.com (12 bytes)
+
+hex = """
+  55 55 81 80 00 01 00 01 00 00 00 00
+  05 5f 68 74 74 70 04 5f 74 63 70 07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  00 21 00 01
+  c0 0c 00 21 00 01 00 00 01 2c 00 0c
+  00 0a 00 14 00 50 03 73 72 76 c0 17
+"""
+
+[expect]
+id = 0x5555
+qr = true
+rd = true
+qd_count = 1
+an_count = 1
+
+[[expect.questions]]
+name = "_http._tcp.example.com"
+qtype = "SRV"
+
+[[expect.answers]]
+name = "_http._tcp.example.com"
+ttl = 300
+rtype = "SRV"
+srv_priority = 10
+srv_weight = 20
+srv_port = 80
+srv_target = "srv.example.com"

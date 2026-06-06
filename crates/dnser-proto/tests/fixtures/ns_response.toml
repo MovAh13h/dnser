@@ -1,0 +1,28 @@
+description = "NS response for example.com (AA=1), NS RDATA uses pointer compression"
+
+# RDATA: ns1.example.com
+#   03 6e 73 31 = "ns1" label
+#   c0 0c = pointer to offset 12 (example.com)
+
+hex = """
+  88 88 85 80 00 01 00 01 00 00 00 00
+  07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  00 02 00 01
+  c0 0c 00 02 00 01 00 00 01 2c 00 06
+  03 6e 73 31 c0 0c
+"""
+
+[expect]
+id = 0x8888
+qr = true
+aa = true
+rd = true
+ra = true
+qd_count = 1
+an_count = 1
+
+[[expect.answers]]
+name = "example.com"
+ttl = 300
+rtype = "NS"
+ns = "ns1.example.com"

@@ -1,0 +1,27 @@
+description = "AAAA record response for example.com resolving to 2001:db8::1"
+
+hex = """
+  cc dd 81 80 00 01 00 01 00 00 00 00
+  07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  00 1c 00 01
+  c0 0c 00 1c 00 01 00 00 01 2c 00 10
+  20 01 0d b8 00 00 00 00 00 00 00 00 00 00 00 01
+"""
+
+[expect]
+id = 0xccdd
+qr = true
+rd = true
+ra = true
+qd_count = 1
+an_count = 1
+
+[[expect.questions]]
+name = "example.com"
+qtype = "AAAA"
+
+[[expect.answers]]
+name = "example.com"
+ttl = 300
+rtype = "AAAA"
+ipv6 = "2001:db8::1"

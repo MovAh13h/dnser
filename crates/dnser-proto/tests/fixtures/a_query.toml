@@ -1,0 +1,22 @@
+description = "Standard A record query for example.com, recursion desired"
+
+hex = """
+  aa bb 01 00 00 01 00 00 00 00 00 00
+  07 65 78 61 6d 70 6c 65 03 63 6f 6d 00
+  00 01 00 01
+"""
+
+[expect]
+id = 0xaabb
+qr = false
+rd = true
+ra = false
+aa = false
+qd_count = 1
+an_count = 0
+ns_count = 0
+ar_count = 0
+
+[[expect.questions]]
+name = "example.com"
+qtype = "A"
