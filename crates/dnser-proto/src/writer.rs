@@ -68,7 +68,7 @@ impl Writer {
             }
 
             let current_pos = self.buf.len();
-            if current_pos <= 0x3FFF {
+            if current_pos <= 0b0011_1111_1111_1111 {
                 self.name_offsets
                     .insert(suffix.to_string(), current_pos as u16);
             }

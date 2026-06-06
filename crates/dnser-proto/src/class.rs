@@ -1,24 +1,27 @@
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
-pub enum Class {
-    IN = 1,
-    CS = 2,
-    CH = 3,
-    HS = 4,
-    ANY = 255,
+pub struct Class(u16);
+
+impl Class {
+    pub const IN: Self = Self(1);
+    pub const CS: Self = Self(2);
+    pub const CH: Self = Self(3);
+    pub const HS: Self = Self(4);
+    pub const ANY: Self = Self(255);
+
+    pub fn is_known(self) -> bool {
+        self == Self::IN || self == Self::CS || self == Self::CH || self == Self::HS || self == Self::ANY
+    }
 }
 
-impl TryFrom<u16> for Class {
-    type Error = u16;
+impl From<u16> for Class {
+    fn from(v: u16) -> Self {
+        Self(v)
+    }
+}
 
-    fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(Self::IN),
-            2 => Ok(Self::CS),
-            3 => Ok(Self::CH),
-            4 => Ok(Self::HS),
-            255 => Ok(Self::ANY),
-            n => Err(n),
-        }
+impl From<Class> for u16 {
+    fn from(c: Class) -> Self {
+        c.0
     }
 }
