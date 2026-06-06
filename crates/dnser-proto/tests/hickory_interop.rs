@@ -41,25 +41,25 @@ fn check_interop(fixture_file: &str) {
     let hickory = HickoryMessage::from_vec(&raw)
         .unwrap_or_else(|e| panic!("{desc}: hickory parse failed: {e}"));
 
-    assert_eq!(ours.header.id, hickory.id(), "{desc}: id");
+    assert_eq!(ours.header.id, hickory.id, "{desc}: id");
     assert_eq!(
         ours.questions.len(),
-        hickory.queries().len(),
+        hickory.queries.len(),
         "{desc}: question count"
     );
     assert_eq!(
         ours.answers.len(),
-        hickory.answers().len(),
+        hickory.answers.len(),
         "{desc}: answer count"
     );
     assert_eq!(
         ours.authority.len(),
-        hickory.name_servers().len(),
+        hickory.authorities.len(),
         "{desc}: authority count"
     );
     assert_eq!(
         ours.additional.len(),
-        hickory.additionals().len(),
+        hickory.additionals.len(),
         "{desc}: additional count"
     );
 
@@ -68,10 +68,10 @@ fn check_interop(fixture_file: &str) {
         .unwrap_or_else(|e| panic!("{desc}: our to_bytes failed: {e}"));
     let reparsed = HickoryMessage::from_vec(&our_bytes)
         .unwrap_or_else(|e| panic!("{desc}: hickory rejected our serialized bytes: {e}"));
-    assert_eq!(ours.header.id, reparsed.id(), "{desc}: id after re-encode");
+    assert_eq!(ours.header.id, reparsed.id, "{desc}: id after re-encode");
     assert_eq!(
         ours.answers.len(),
-        reparsed.answers().len(),
+        reparsed.answers.len(),
         "{desc}: answer count after re-encode"
     );
 }

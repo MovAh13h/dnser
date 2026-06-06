@@ -18,5 +18,5 @@ bytes = "1"
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
-hickory-proto = "0.24"
+hickory-proto = "0.26"
 proptest = "1"
