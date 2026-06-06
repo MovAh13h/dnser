@@ -15,7 +15,11 @@ impl Question {
     pub fn parse(r: &mut Reader) -> Result<Self, ParseError> {
         let name = r.read_name()?;
         let qtype = RecordType::try_from(r.read_u16()?).map_err(ParseError::UnknownRecordType)?;
-        let qclass = Class::try_from(r.read_u16()?).map_err(ParseError::UnknownClass)?;
+        let qclass_raw = r.read_u16()?;
+        let qclass = Class::from(qclass_raw);
+        if !qclass.is_known() {
+            return Err(ParseError::UnknownClass(qclass_raw));
+        }
         Ok(Self {
             name,
             qtype,
@@ -26,7 +30,7 @@ impl Question {
     pub fn write(&self, w: &mut Writer) -> Result<(), WriteError> {
         w.write_name(&self.name)?;
         w.write_u16(self.qtype as u16);
-        w.write_u16(self.qclass as u16);
+        w.write_u16(u16::from(self.qclass));
         Ok(())
     }
 }

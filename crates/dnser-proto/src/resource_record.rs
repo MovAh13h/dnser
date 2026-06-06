@@ -32,7 +32,7 @@ impl ResourceRecord {
     pub fn parse(r: &mut Reader) -> Result<Self, ParseError> {
         let name = r.read_name()?;
         let rtype = r.read_u16()?;
-        let class = Class::try_from(r.read_u16()?).map_err(ParseError::UnknownClass)?;
+        let class = Class::from(r.read_u16()?);
         let ttl = r.read_u32()?;
         let rdlen = r.read_u16()?;
         let rdata = RData::parse(r, rtype, rdlen)?;
@@ -50,7 +50,7 @@ impl ResourceRecord {
             Ok(rt) => w.write_u16(rt as u16),
             Err(n) => w.write_u16(n),
         }
-        w.write_u16(self.class as u16);
+        w.write_u16(u16::from(self.class));
         w.write_u32(self.ttl);
         let rdlen_pos = w.reserve_u16();
         let rdata_start = w.pos();
