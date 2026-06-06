@@ -29,8 +29,7 @@ fn check_interop(fixture_file: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(fixture_file);
-    let source = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+    let source = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     let fixture: Fixture =
         toml::from_str(&source).unwrap_or_else(|e| panic!("parse TOML {path:?}: {e}"));
 
@@ -43,10 +42,26 @@ fn check_interop(fixture_file: &str) {
         .unwrap_or_else(|e| panic!("{desc}: hickory parse failed: {e}"));
 
     assert_eq!(ours.header.id, hickory.id(), "{desc}: id");
-    assert_eq!(ours.questions.len(), hickory.queries().len(), "{desc}: question count");
-    assert_eq!(ours.answers.len(), hickory.answers().len(), "{desc}: answer count");
-    assert_eq!(ours.authority.len(), hickory.name_servers().len(), "{desc}: authority count");
-    assert_eq!(ours.additional.len(), hickory.additionals().len(), "{desc}: additional count");
+    assert_eq!(
+        ours.questions.len(),
+        hickory.queries().len(),
+        "{desc}: question count"
+    );
+    assert_eq!(
+        ours.answers.len(),
+        hickory.answers().len(),
+        "{desc}: answer count"
+    );
+    assert_eq!(
+        ours.authority.len(),
+        hickory.name_servers().len(),
+        "{desc}: authority count"
+    );
+    assert_eq!(
+        ours.additional.len(),
+        hickory.additionals().len(),
+        "{desc}: additional count"
+    );
 
     let our_bytes = ours
         .to_bytes()
@@ -54,7 +69,11 @@ fn check_interop(fixture_file: &str) {
     let reparsed = HickoryMessage::from_vec(&our_bytes)
         .unwrap_or_else(|e| panic!("{desc}: hickory rejected our serialized bytes: {e}"));
     assert_eq!(ours.header.id, reparsed.id(), "{desc}: id after re-encode");
-    assert_eq!(ours.answers.len(), reparsed.answers().len(), "{desc}: answer count after re-encode");
+    assert_eq!(
+        ours.answers.len(),
+        reparsed.answers().len(),
+        "{desc}: answer count after re-encode"
+    );
 }
 
 macro_rules! interop_test {
