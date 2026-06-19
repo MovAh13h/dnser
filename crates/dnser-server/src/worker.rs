@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 use crate::error::QueryError;
 use crate::handler::build_response;
 
-const MAX_UDP_SIZE: usize = 512;
+const MAX_UDP_SIZE: usize = 4096;
 
 pub(crate) struct Worker {
     id: usize,
