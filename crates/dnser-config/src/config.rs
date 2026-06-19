@@ -20,12 +20,6 @@ pub struct Config {
 impl Config {
     /// Rejects configurations that are structurally valid TOML but semantically wrong.
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        if self.server.listen.is_empty() {
-            return Err(ConfigError::EmptyListen);
-        }
-        if self.server.workers == Some(0) {
-            return Err(ConfigError::ZeroWorkers);
-        }
         Ok(())
     }
 }

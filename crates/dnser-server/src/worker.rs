@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::SocketAddr;
 
 use bytes::Bytes;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -16,8 +16,7 @@ pub(crate) struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn bind(id: usize, port: u16) -> Result<Self, std::io::Error> {
-        let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
+    pub(crate) fn bind(id: usize, addr: SocketAddr) -> Result<Self, std::io::Error> {
         let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
         sock.set_reuse_port(true)?;
         sock.set_nonblocking(true)?;
