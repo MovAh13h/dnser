@@ -16,6 +16,8 @@ name = "dnser"
 path = "src/main.rs"
 
 [dependencies]
+dnser-config = { path = "../dnser-config" }
 dnser-server = { path = "../dnser-server" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-tracing-subscriber = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json"] }

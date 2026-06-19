@@ -1,5 +1,4 @@
 use std::io::Write;
-use std::net::SocketAddr;
 use std::path::Path;
 
 use dnser_config::{ConfigError, DEFAULT_PORT, LogFormat, LogLevel, load};
@@ -11,15 +10,14 @@ fn config_file(content: &str) -> NamedTempFile {
     f
 }
 
-fn default_listen() -> Vec<SocketAddr> {
-    vec![format!("0.0.0.0:{DEFAULT_PORT}").parse().unwrap()]
-}
-
 #[test]
 fn defaults_when_no_path() {
     let config = load(None).unwrap();
-    assert_eq!(config.server.listen, default_listen());
-    assert_eq!(config.server.workers, None);
+    assert_eq!(
+        config.server.listen,
+        format!("0.0.0.0:{DEFAULT_PORT}").parse().unwrap()
+    );
+    assert_eq!(config.server.workers, 1);
     assert_eq!(config.logging.level, LogLevel::Info);
     assert_eq!(config.logging.format, LogFormat::Pretty);
 }
@@ -29,16 +27,13 @@ fn parses_server_section() {
     let f = config_file(
         r#"
         [server]
-        listen = ["127.0.0.1:5353"]
+        listen = "127.0.0.1:5353"
         workers = 4
         "#,
     );
     let config = load(Some(f.path())).unwrap();
-    assert_eq!(
-        config.server.listen,
-        vec!["127.0.0.1:5353".parse().unwrap()]
-    );
-    assert_eq!(config.server.workers, Some(4));
+    assert_eq!(config.server.listen, "127.0.0.1:5353".parse().unwrap());
+    assert_eq!(config.server.workers, 4);
 }
 
 #[test]
@@ -47,24 +42,6 @@ fn parses_logging_section() {
     let config = load(Some(f.path())).unwrap();
     assert_eq!(config.logging.level, LogLevel::Debug);
     assert_eq!(config.logging.format, LogFormat::Json);
-}
-
-#[test]
-fn empty_listen_is_rejected() {
-    let f = config_file("[server]\nlisten = []");
-    assert!(matches!(
-        load(Some(f.path())),
-        Err(ConfigError::EmptyListen)
-    ));
-}
-
-#[test]
-fn zero_workers_is_rejected() {
-    let f = config_file("[server]\nworkers = 0");
-    assert!(matches!(
-        load(Some(f.path())),
-        Err(ConfigError::ZeroWorkers)
-    ));
 }
 
 #[test]
