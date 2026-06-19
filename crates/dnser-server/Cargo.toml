@@ -16,6 +16,6 @@ categories = ["network-programming", "asynchronous"]
 dnser-config = { path = "../dnser-config" }
 dnser-proto = { path = "../dnser-proto" }
 bytes = "1"
-tokio = { version = "1", features = ["net", "rt-multi-thread", "signal", "macros"] }
+tokio = { version = "1", features = ["net", "rt-multi-thread", "signal", "sync", "time", "macros"] }
 tracing = "0.1"
 socket2 = { version = "0.5", features = ["all"] }
