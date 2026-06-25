@@ -1,5 +1,7 @@
 use bytes::Bytes;
-use dnser_proto::{Class, Header, Message, Question, RData, RecordType, ResourceRecord};
+use dnser_proto::{
+    Class, EdnsOption, Header, Message, Question, RData, RecordType, ResourceRecord,
+};
 use proptest::prelude::*;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -77,6 +79,15 @@ fn arb_rdata() -> impl Strategy<Value = RData> {
                     minimum,
                 }
             }),
+        prop::collection::vec(
+            (
+                any::<u16>(),
+                prop::collection::vec(any::<u8>(), 0..=8usize).prop_map(Bytes::from)
+            )
+                .prop_map(|(code, data)| EdnsOption { code, data }),
+            0..=3usize,
+        )
+        .prop_map(RData::OPT),
         // rtype 100-200: not a known RecordType, always parses back as Unknown
         (
             100u16..=200u16,

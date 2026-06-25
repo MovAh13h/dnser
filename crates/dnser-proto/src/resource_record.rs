@@ -25,6 +25,7 @@ impl ResourceRecord {
             RData::MX { .. } => Ok(RecordType::MX),
             RData::TXT(_) => Ok(RecordType::TXT),
             RData::SRV { .. } => Ok(RecordType::SRV),
+            RData::OPT(_) => Ok(RecordType::OPT),
             RData::Unknown { rtype, .. } => Err(*rtype),
         }
     }

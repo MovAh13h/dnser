@@ -13,7 +13,7 @@ use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
 use crate::error::QueryError;
-use crate::handler::{MAX_UDP_PAYLOAD, build_truncated, process_query};
+use crate::handler::{build_truncated, process_query, query_udp_limit};
 
 pub(crate) struct Worker {
     id: usize,
@@ -112,10 +112,11 @@ async fn handle_query(
     let query = dnser_proto::Message::parse(data)?;
     debug!(id = query.header.id, peer = %peer, "udp query");
 
+    let udp_limit = query_udp_limit(&query);
     let response = process_query(resolver, cache, &query).await;
     let bytes = response.to_bytes()?;
 
-    if bytes.len() > MAX_UDP_PAYLOAD {
+    if bytes.len() > udp_limit {
         debug!(id = query.header.id, "response truncated for udp");
         socket
             .send_to(&build_truncated(&query).to_bytes()?, peer)

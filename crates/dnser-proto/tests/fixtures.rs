@@ -255,7 +255,7 @@ fn assert_record(exp: &ExpectRecord, rr: &dnser_proto::ResourceRecord, desc: &st
                 assert_eq!(*serial, s, "{desc}: {label}.soa_serial");
             }
         }
-        RData::Unknown { .. } => {}
+        RData::OPT(_) | RData::Unknown { .. } => {}
     }
 }
 

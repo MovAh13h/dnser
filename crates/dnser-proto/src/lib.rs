@@ -21,7 +21,7 @@ pub use message::Message;
 pub use opcode::Opcode;
 pub use question::Question;
 pub use rcode::Rcode;
-pub use rdata::RData;
+pub use rdata::{EdnsOption, RData};
 pub use reader::Reader;
 pub use record_type::RecordType;
 pub use resource_record::ResourceRecord;

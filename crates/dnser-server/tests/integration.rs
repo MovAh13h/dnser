@@ -2,7 +2,9 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use dnser_config::{CacheConfig, Config, ResolverConfig, ServerConfig};
-use dnser_proto::{Class, Header, Message, Question, RData, RecordType, ResourceRecord};
+use dnser_proto::{
+    Class, EdnsOption, Header, Message, Question, RData, RecordType, ResourceRecord,
+};
 use dnser_server::ServerHandle;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
@@ -67,6 +69,18 @@ fn make_query(name: &str, qtype: RecordType) -> Message {
         }],
         ..Default::default()
     }
+}
+
+fn make_edns_query(name: &str, qtype: RecordType, udp_payload: u16) -> Message {
+    let mut q = make_query(name, qtype);
+    q.additional.push(ResourceRecord {
+        name: String::new(),
+        class: Class::from(udp_payload),
+        ttl: 0,
+        rdata: RData::OPT(Vec::new()),
+    });
+    q.header.ar_count = 1;
+    q
 }
 
 /// Mock upstream: echoes the query back as a minimal valid response.
@@ -314,6 +328,189 @@ async fn tcp_cache_hit_returns_valid_response() {
     let r2 = tcp_query(server.tcp_addr, &query).await;
     assert!(r2.header.is_response());
     assert_eq!(r2.header.id, query.header.id);
+
+    server.shutdown().await;
+}
+
+// ── EDNS(0) tests ─────────────────────────────────────────────────────────────
+
+fn has_opt(msg: &Message) -> bool {
+    msg.additional
+        .iter()
+        .any(|rr| matches!(rr.rdata, RData::OPT(_)))
+}
+
+fn opt_udp_size(msg: &Message) -> Option<u16> {
+    msg.additional
+        .iter()
+        .find(|rr| matches!(rr.rdata, RData::OPT(_)))
+        .map(|rr| u16::from(rr.class))
+}
+
+#[tokio::test]
+async fn udp_edns_query_returns_opt_record() {
+    let upstream = mock_upstream(echo_response).await;
+    let server = start_server(upstream).await;
+
+    let query = make_edns_query("example.com", RecordType::A, 4096);
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket
+        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
+        .await
+        .unwrap();
+    let mut buf = [0u8; 4096];
+    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
+    let response = Message::try_from(&buf[..n]).unwrap();
+
+    assert!(response.header.is_response());
+    assert!(has_opt(&response), "response must contain OPT record");
+    assert_eq!(opt_udp_size(&response), Some(4096));
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn udp_non_edns_query_returns_no_opt_record() {
+    let upstream = mock_upstream(echo_response).await;
+    let server = start_server(upstream).await;
+
+    let query = make_query("example.com", RecordType::A);
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket
+        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
+        .await
+        .unwrap();
+    let mut buf = [0u8; 4096];
+    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
+    let response = Message::try_from(&buf[..n]).unwrap();
+
+    assert!(response.header.is_response());
+    assert!(
+        !has_opt(&response),
+        "non-EDNS query must not get OPT record"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn tcp_edns_query_returns_opt_record() {
+    let upstream = mock_upstream(echo_response).await;
+    let server = start_server(upstream).await;
+
+    let query = make_edns_query("example.com", RecordType::A, 4096);
+    let response = tcp_query(server.tcp_addr, &query).await;
+
+    assert!(response.header.is_response());
+    assert!(has_opt(&response), "TCP response must contain OPT record");
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn udp_edns_large_payload_not_truncated() {
+    // Client advertises 4096-byte payload, so the large response (~829 bytes)
+    // should be delivered in full over UDP without TC=1.
+    let upstream = mock_upstream(large_response).await;
+    let server = start_server(upstream).await;
+
+    let query = make_edns_query("example.com", RecordType::A, 4096);
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket
+        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
+        .await
+        .unwrap();
+    let mut buf = [0u8; 4096];
+    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
+    let response = Message::try_from(&buf[..n]).unwrap();
+
+    assert!(response.header.is_response());
+    assert!(
+        !response.header.is_truncated(),
+        "EDNS client should receive full response"
+    );
+    assert!(!response.answers.is_empty());
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn edns_version_mismatch_returns_badvers() {
+    let upstream = mock_upstream(echo_response).await;
+    let server = start_server(upstream).await;
+
+    // Build a query with OPT version=1 (unsupported).
+    let mut query = make_query("example.com", RecordType::A);
+    query.additional.push(ResourceRecord {
+        name: String::new(),
+        class: Class::from(4096u16),
+        // TTL layout: ext_rcode(8)|version(8)|flags(16); version=1 → 0x00010000
+        ttl: 0x0001_0000,
+        rdata: RData::OPT(Vec::new()),
+    });
+    query.header.ar_count = 1;
+
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket
+        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
+        .await
+        .unwrap();
+    let mut buf = [0u8; 4096];
+    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
+    let response = Message::try_from(&buf[..n]).unwrap();
+
+    assert!(response.header.is_response());
+    // BADVERS: header RCODE=0, extended RCODE in OPT TTL byte 0 = 1
+    assert_eq!(response.header.rcode(), Ok(dnser_proto::Rcode::NoError));
+    let opt = response
+        .additional
+        .iter()
+        .find(|rr| matches!(rr.rdata, RData::OPT(_)))
+        .expect("BADVERS response must contain OPT");
+    assert_eq!(opt.ttl >> 24, 1, "extended RCODE must be BADVERS (1)");
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn edns_options_are_not_forwarded_server_opts_empty() {
+    // A query carrying a client subnet option should receive a server OPT
+    // with no options (we don't implement ECS or option forwarding).
+    let upstream = mock_upstream(echo_response).await;
+    let server = start_server(upstream).await;
+
+    let mut query = make_query("example.com", RecordType::A);
+    query.additional.push(ResourceRecord {
+        name: String::new(),
+        class: Class::from(4096u16),
+        ttl: 0,
+        rdata: RData::OPT(vec![EdnsOption {
+            code: 8, // ECS
+            data: bytes::Bytes::from_static(&[0, 1, 24, 0, 192, 168, 1, 0]),
+        }]),
+    });
+    query.header.ar_count = 1;
+
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket
+        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
+        .await
+        .unwrap();
+    let mut buf = [0u8; 4096];
+    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
+    let response = Message::try_from(&buf[..n]).unwrap();
+
+    assert!(response.header.is_response());
+    assert!(has_opt(&response));
+    let opt = response
+        .additional
+        .iter()
+        .find(|rr| matches!(rr.rdata, RData::OPT(_)))
+        .unwrap();
+    assert!(
+        matches!(&opt.rdata, RData::OPT(opts) if opts.is_empty()),
+        "server OPT must carry no options"
+    );
 
     server.shutdown().await;
 }

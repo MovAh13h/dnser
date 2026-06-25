@@ -7,6 +7,13 @@ use crate::reader::Reader;
 use crate::record_type::RecordType;
 use crate::writer::Writer;
 
+/// A single EDNS(0) option (RFC 6891 §6.1.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EdnsOption {
+    pub code: u16,
+    pub data: Bytes,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RData {
     A(Ipv4Addr),
@@ -34,6 +41,8 @@ pub enum RData {
         port: u16,
         target: String,
     },
+    /// OPT pseudo-RR for EDNS(0) (RFC 6891). CLASS = UDP payload size; TTL = ext RCODE + version + flags.
+    OPT(Vec<EdnsOption>),
     Unknown {
         rtype: u16,
         data: Bytes,
@@ -102,6 +111,20 @@ impl RData {
                 port: r.read_u16()?,
                 target: r.read_name()?,
             }),
+            Ok(RecordType::OPT) => {
+                let mut options = Vec::new();
+                let mut remaining = rdlen as usize;
+                while remaining > 0 {
+                    let code = r.read_u16()?;
+                    let len = r.read_u16()? as usize;
+                    remaining = remaining
+                        .checked_sub(4 + len)
+                        .ok_or(ParseError::RdataLengthMismatch)?;
+                    let data = r.read_bytes(len)?;
+                    options.push(EdnsOption { code, data });
+                }
+                Ok(Self::OPT(options))
+            }
             _ => Ok(Self::Unknown {
                 rtype,
                 data: r.read_bytes(rdlen as usize)?,
@@ -157,6 +180,13 @@ impl RData {
                 w.write_u16(*weight);
                 w.write_u16(*port);
                 w.write_name(target)?;
+            }
+            Self::OPT(options) => {
+                for opt in options {
+                    w.write_u16(opt.code);
+                    w.write_u16(opt.data.len() as u16);
+                    w.write_bytes(&opt.data);
+                }
             }
             Self::Unknown { data, .. } => w.write_bytes(data),
         }
