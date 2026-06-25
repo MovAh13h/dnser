@@ -6,9 +6,7 @@ use dnser_resolver::{ResolveError, Resolver};
 
 // Spawns a mock UDP server. For each incoming packet, `respond` is called with the
 // raw bytes; returning a non-empty vec causes that vec to be sent back as the response.
-async fn mock_upstream(
-    respond: impl Fn(&[u8]) -> Vec<u8> + Send + 'static,
-) -> SocketAddr {
+async fn mock_upstream(respond: impl Fn(&[u8]) -> Vec<u8> + Send + 'static) -> SocketAddr {
     let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let addr = socket.local_addr().unwrap();
     tokio::spawn(async move {
@@ -25,7 +23,11 @@ async fn mock_upstream(
 
 fn make_query() -> Message {
     Message {
-        header: Header { id: 1234, qd_count: 1, ..Default::default() },
+        header: Header {
+            id: 1234,
+            qd_count: 1,
+            ..Default::default()
+        },
         questions: vec![Question {
             name: "example.com".to_string(),
             qtype: RecordType::A,
@@ -96,9 +98,12 @@ fn respond_with_wrong_question(query_bytes: &[u8]) -> Vec<u8> {
 }
 
 async fn resolver_with(addrs: Vec<SocketAddr>) -> Resolver {
-    Resolver::new(ResolverConfig { upstreams: addrs, timeout_ms: 200 })
-        .await
-        .unwrap()
+    Resolver::new(ResolverConfig {
+        upstreams: addrs,
+        timeout_ms: 200,
+    })
+    .await
+    .unwrap()
 }
 
 // --- tests ---
