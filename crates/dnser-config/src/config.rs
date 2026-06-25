@@ -29,6 +29,12 @@ impl Config {
         if self.server.workers == 0 {
             return Err(ConfigError::ZeroWorkers);
         }
+        if self.server.tcp_idle_timeout_secs == 0 {
+            return Err(ConfigError::ZeroTcpIdleTimeout);
+        }
+        if self.server.tcp_max_connections == 0 {
+            return Err(ConfigError::ZeroTcpMaxConnections);
+        }
         if self.cache.max_entries == 0 {
             return Err(ConfigError::ZeroCacheCapacity);
         }

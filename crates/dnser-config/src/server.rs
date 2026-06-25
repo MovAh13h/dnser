@@ -11,10 +11,12 @@ pub const DEFAULT_PORT: u16 = 1053;
 ///
 /// ```toml
 /// [server]
-/// listen               = "0.0.0.0:1053"
-/// workers              = 4
-/// tokio_threads        = 4
-/// shutdown_drain_secs  = 5
+/// listen                 = "0.0.0.0:1053"
+/// workers                = 4
+/// tokio_threads          = 4
+/// shutdown_drain_secs    = 5
+/// tcp_idle_timeout_secs  = 10
+/// tcp_max_connections    = 1000
 /// ```
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -22,8 +24,8 @@ pub struct ServerConfig {
     /// Socket address the server binds to. Defaults to `0.0.0.0:1053`.
     pub listen: SocketAddr,
 
-    /// Number of worker tasks. Each binds its own `SO_REUSEPORT` socket so the
-    /// kernel distributes incoming UDP datagrams across them. Defaults to `1`.
+    /// Number of UDP worker tasks. Each binds its own `SO_REUSEPORT` socket so the
+    /// kernel distributes incoming datagrams across them. Defaults to `1`.
     pub workers: usize,
 
     /// Number of tokio runtime threads. `0` means use tokio's default (one per
@@ -31,9 +33,17 @@ pub struct ServerConfig {
     /// per worker; leave at `0` to let tokio decide. Defaults to `0`.
     pub tokio_threads: usize,
 
-    /// Seconds to wait for in-flight queries to finish after a shutdown signal
+    /// Seconds to wait for in-flight UDP queries to finish after a shutdown signal
     /// before forcefully aborting them. Defaults to `5`.
     pub shutdown_drain_secs: u64,
+
+    /// Seconds of inactivity before the server closes a TCP connection (RFC 7766 §6.2.3).
+    /// Defaults to `10`.
+    pub tcp_idle_timeout_secs: u64,
+
+    /// Maximum number of simultaneous TCP connections. Excess connections are dropped
+    /// immediately. Defaults to `1000`.
+    pub tcp_max_connections: usize,
 }
 
 impl Default for ServerConfig {
@@ -43,6 +53,8 @@ impl Default for ServerConfig {
             workers: 1,
             tokio_threads: 0,
             shutdown_drain_secs: 5,
+            tcp_idle_timeout_secs: 10,
+            tcp_max_connections: 1000,
         }
     }
 }

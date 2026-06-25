@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use dnser_cache::Cache;
+use dnser_proto::MAX_UDP_SIZE;
 use dnser_resolver::Resolver;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
@@ -12,9 +13,7 @@ use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
 use crate::error::QueryError;
-use crate::handler::build_servfail;
-
-use dnser_proto::{Header, MAX_UDP_SIZE};
+use crate::handler::{MAX_UDP_PAYLOAD, build_truncated, process_query};
 
 pub(crate) struct Worker {
     id: usize,
@@ -49,6 +48,10 @@ impl Worker {
         })
     }
 
+    pub(crate) fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.socket.local_addr()
+    }
+
     pub(crate) async fn run(mut self) {
         let mut buf = [0u8; MAX_UDP_SIZE];
         let mut queries: JoinSet<()> = JoinSet::new();
@@ -71,7 +74,6 @@ impl Worker {
                         Err(e) => warn!(worker = self.id, err = %e, "recv error"),
                     }
                 }
-                // reap completed tasks so the set doesn't grow without bound
                 Some(res) = queries.join_next(), if !queries.is_empty() => {
                     if let Err(e) = res {
                         warn!(worker = self.id, err = %e, "query task panicked");
@@ -94,7 +96,6 @@ impl Worker {
                     remaining, "drain timeout; aborting in-flight queries"
                 );
                 queries.abort_all();
-                // Drive the set to empty so task destructors run before we return.
                 while queries.join_next().await.is_some() {}
             }
         }
@@ -109,31 +110,19 @@ async fn handle_query(
     peer: SocketAddr,
 ) -> Result<(), QueryError> {
     let query = dnser_proto::Message::parse(data)?;
-    debug!(id = query.header.id, peer = %peer, "query");
+    debug!(id = query.header.id, peer = %peer, "udp query");
 
-    if let [question] = query.questions.as_slice() {
-        if let Some(mut cached) = cache.get(question) {
-            cached.header.id = query.header.id;
-            cached.header.flags =
-                (cached.header.flags & !Header::RD) | (query.header.flags & Header::RD);
-            debug!(id = query.header.id, peer = %peer, "cache hit");
-            socket.send_to(&cached.to_bytes()?, peer).await?;
-            return Ok(());
-        }
+    let response = process_query(resolver, cache, &query).await;
+    let bytes = response.to_bytes()?;
+
+    if bytes.len() > MAX_UDP_PAYLOAD {
+        debug!(id = query.header.id, "response truncated for udp");
+        socket
+            .send_to(&build_truncated(&query).to_bytes()?, peer)
+            .await?;
+    } else {
+        socket.send_to(&bytes, peer).await?;
     }
 
-    let response = match resolver.resolve(&query).await {
-        Ok(msg) => {
-            cache.insert(&msg);
-            msg
-        }
-        Err(e) => {
-            warn!(id = query.header.id, err = %e, "resolution failed");
-            build_servfail(&query)
-        }
-    };
-
-    let bytes = response.to_bytes()?;
-    socket.send_to(&bytes, peer).await?;
     Ok(())
 }
