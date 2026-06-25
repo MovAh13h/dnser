@@ -60,11 +60,8 @@ impl UpstreamSocket {
             next_id: 0,
         }));
 
-        let recv_abort = tokio::spawn(recv_loop(
-            Arc::clone(&socket),
-            Arc::clone(&in_flight),
-        ))
-        .abort_handle();
+        let recv_abort =
+            tokio::spawn(recv_loop(Arc::clone(&socket), Arc::clone(&in_flight))).abort_handle();
 
         Ok(Self {
             socket,
@@ -81,7 +78,10 @@ impl UpstreamSocket {
 
         let (tx, rx) = oneshot::channel();
         let assigned_id = self.allocate_and_insert(tx)?;
-        let mut guard = InFlightGuard { in_flight: Arc::clone(&self.in_flight), id: Some(assigned_id) };
+        let mut guard = InFlightGuard {
+            in_flight: Arc::clone(&self.in_flight),
+            id: Some(assigned_id),
+        };
 
         bytes[0..2].copy_from_slice(&assigned_id.to_be_bytes());
         bytes[2] |= (Header::RD >> 8) as u8; // RD lives in bit 0 of the flags high byte
@@ -162,7 +162,10 @@ async fn recv_loop(socket: Arc<UdpSocket>, in_flight: Arc<Mutex<InFlight>>) {
         if let Some(tx) = tx {
             let _ = tx.send(Bytes::copy_from_slice(&buf[..n]));
         } else {
-            warn!(id, "recv_loop: no in-flight query for ID (late or spurious response)");
+            warn!(
+                id,
+                "recv_loop: no in-flight query for ID (late or spurious response)"
+            );
         }
     }
 }
@@ -187,7 +190,8 @@ impl Resolver {
             return Err(ResolveError::NoUpstreams);
         }
 
-        let mut futs: FuturesUnordered<_> = self.upstreams
+        let mut futs: FuturesUnordered<_> = self
+            .upstreams
             .iter()
             .map(|u| u.query(query, self.timeout))
             .collect();

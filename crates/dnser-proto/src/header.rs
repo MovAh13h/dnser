@@ -130,7 +130,8 @@ mod tests {
 
     #[test]
     fn single_bit_flags() {
-        let cases: &[(u16, fn(&Header) -> bool)] = &[
+        type FlagAccessor = fn(&Header) -> bool;
+        let cases: &[(u16, FlagAccessor)] = &[
             (0b0000_0100_0000_0000, Header::is_authoritative),
             (0b0000_0010_0000_0000, Header::is_truncated),
             (0b0000_0001_0000_0000, Header::recursion_desired),

@@ -45,7 +45,7 @@ fn arb_rdata() -> impl Strategy<Value = RData> {
             exchange
         }),
         prop::collection::vec(
-            prop::collection::vec(any::<u8>(), 0..=255usize).prop_map(|v| Bytes::from(v)),
+            prop::collection::vec(any::<u8>(), 0..=255usize).prop_map(Bytes::from),
             0..=4usize,
         )
         .prop_map(RData::TXT),

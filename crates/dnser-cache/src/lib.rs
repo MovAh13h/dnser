@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::{BuildHasher, Hash};
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -56,9 +56,7 @@ impl Cache {
     }
 
     fn shard_index(&self, key: &CacheKey) -> usize {
-        let mut h = self.build_hasher.build_hasher();
-        key.hash(&mut h);
-        h.finish() as usize & (NUM_SHARDS - 1)
+        self.build_hasher.hash_one(key) as usize & (NUM_SHARDS - 1)
     }
 
     /// Returns a TTL-rewritten clone of the cached response, or `None` on miss/expiry.

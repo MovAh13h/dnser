@@ -59,7 +59,10 @@ fn malformed_toml_is_an_error() {
 #[test]
 fn zero_workers_is_an_error() {
     let f = config_file("[server]\nworkers = 0");
-    assert!(matches!(load(Some(f.path())), Err(ConfigError::ZeroWorkers)));
+    assert!(matches!(
+        load(Some(f.path())),
+        Err(ConfigError::ZeroWorkers)
+    ));
 }
 
 #[test]
