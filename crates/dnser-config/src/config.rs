@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 use crate::error::ConfigError;
 use crate::logging::LoggingConfig;
+use crate::resolver::ResolverConfig;
 use crate::server::ServerConfig;
 
 /// Root configuration object returned by [`crate::load`].
@@ -15,6 +16,8 @@ pub struct Config {
     pub server: ServerConfig,
     /// Log level and output format.
     pub logging: LoggingConfig,
+    /// Forwarding resolver settings.
+    pub resolver: ResolverConfig,
 }
 
 impl Config {

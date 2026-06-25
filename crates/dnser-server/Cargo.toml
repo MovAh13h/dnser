@@ -15,6 +15,7 @@ categories = ["network-programming", "asynchronous"]
 [dependencies]
 dnser-config = { path = "../dnser-config" }
 dnser-proto = { path = "../dnser-proto" }
+dnser-resolver = { path = "../dnser-resolver" }
 bytes = "1"
 tokio = { version = "1", features = ["net", "rt-multi-thread", "signal", "sync", "time", "macros"] }
 tracing = "0.1"

@@ -1,3 +1,6 @@
+/// Maximum DNS message size over UDP.
+pub const MAX_UDP_SIZE: usize = 4096;
+
 pub mod class;
 pub mod error;
 pub mod header;

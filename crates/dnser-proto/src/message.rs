@@ -7,7 +7,7 @@ use crate::reader::Reader;
 use crate::resource_record::ResourceRecord;
 use crate::writer::Writer;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Message {
     pub header: Header,
     pub questions: Vec<Question>,

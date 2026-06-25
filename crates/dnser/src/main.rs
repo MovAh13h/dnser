@@ -15,7 +15,7 @@ fn main() -> Result<(), std::io::Error> {
     builder
         .enable_all()
         .build()?
-        .block_on(dnser_server::run(config.server))
+        .block_on(dnser_server::run(config))
 }
 
 fn init_logging(config: &LoggingConfig) {

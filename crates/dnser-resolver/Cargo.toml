@@ -12,3 +12,13 @@ documentation = "https://docs.rs/dnser-resolver"
 keywords = ["dns", "resolver", "recursive", "forwarding", "networking"]
 categories = ["network-programming", "asynchronous"]
 
+[dependencies]
+dnser-config = { path = "../dnser-config" }
+dnser-proto = { path = "../dnser-proto" }
+bytes = "1"
+futures-util = "0.3"
+tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros"] }

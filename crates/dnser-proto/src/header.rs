@@ -4,7 +4,7 @@ use crate::rcode::Rcode;
 use crate::reader::Reader;
 use crate::writer::Writer;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
     pub id: u16,
     pub flags: u16,
@@ -15,16 +15,16 @@ pub struct Header {
 }
 
 impl Header {
-    const QR: u16 = 0b1000_0000_0000_0000;
-    const OPCODE: u16 = 0b0111_1000_0000_0000;
-    const AA: u16 = 0b0000_0100_0000_0000;
-    const TC: u16 = 0b0000_0010_0000_0000;
-    const RD: u16 = 0b0000_0001_0000_0000;
-    const RA: u16 = 0b0000_0000_1000_0000;
-    const Z: u16 = 0b0000_0000_0100_0000;
-    const AD: u16 = 0b0000_0000_0010_0000;
-    const CD: u16 = 0b0000_0000_0001_0000;
-    const RCODE: u16 = 0b0000_0000_0000_1111;
+    pub const QR: u16 = 0b1000_0000_0000_0000;
+    pub const OPCODE: u16 = 0b0111_1000_0000_0000;
+    pub const AA: u16 = 0b0000_0100_0000_0000;
+    pub const TC: u16 = 0b0000_0010_0000_0000;
+    pub const RD: u16 = 0b0000_0001_0000_0000;
+    pub const RA: u16 = 0b0000_0000_1000_0000;
+    pub const Z: u16 = 0b0000_0000_0100_0000;
+    pub const AD: u16 = 0b0000_0000_0010_0000;
+    pub const CD: u16 = 0b0000_0000_0001_0000;
+    pub const RCODE: u16 = 0b0000_0000_0000_1111;
 
     pub fn is_response(&self) -> bool {
         self.flags & Self::QR != 0

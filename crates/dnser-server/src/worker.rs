@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use dnser_resolver::Resolver;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
 use tokio::sync::watch;
@@ -10,13 +11,14 @@ use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
 use crate::error::QueryError;
-use crate::handler::build_response;
+use crate::handler::build_servfail;
 
-const MAX_UDP_SIZE: usize = 4096;
+use dnser_proto::MAX_UDP_SIZE;
 
 pub(crate) struct Worker {
     id: usize,
     socket: Arc<UdpSocket>,
+    resolver: Arc<Resolver>,
     shutdown: watch::Receiver<bool>,
     drain_timeout: Duration,
 }
@@ -25,6 +27,7 @@ impl Worker {
     pub(crate) fn bind(
         id: usize,
         addr: SocketAddr,
+        resolver: Arc<Resolver>,
         shutdown: watch::Receiver<bool>,
         drain_timeout: Duration,
     ) -> Result<Self, std::io::Error> {
@@ -36,6 +39,7 @@ impl Worker {
         Ok(Self {
             id,
             socket,
+            resolver,
             shutdown,
             drain_timeout,
         })
@@ -52,8 +56,9 @@ impl Worker {
                         Ok((len, peer)) => {
                             let data = Bytes::copy_from_slice(&buf[..len]);
                             let socket = Arc::clone(&self.socket);
+                            let resolver = Arc::clone(&self.resolver);
                             queries.spawn(async move {
-                                if let Err(e) = handle_query(&socket, data, peer).await {
+                                if let Err(e) = handle_query(&socket, &resolver, data, peer).await {
                                     warn!(peer = %peer, err = %e, "query error");
                                 }
                             });
@@ -91,10 +96,23 @@ impl Worker {
     }
 }
 
-async fn handle_query(socket: &UdpSocket, data: Bytes, peer: SocketAddr) -> Result<(), QueryError> {
+async fn handle_query(
+    socket: &UdpSocket,
+    resolver: &Resolver,
+    data: Bytes,
+    peer: SocketAddr,
+) -> Result<(), QueryError> {
     let query = dnser_proto::Message::parse(data)?;
     debug!(id = query.header.id, peer = %peer, "query");
-    let response = build_response(query);
+
+    let response = match resolver.resolve(&query).await {
+        Ok(msg) => msg,
+        Err(e) => {
+            warn!(id = query.header.id, err = %e, "resolution failed");
+            build_servfail(&query)
+        }
+    };
+
     let bytes = response.to_bytes()?;
     socket.send_to(&bytes, peer).await?;
     Ok(())

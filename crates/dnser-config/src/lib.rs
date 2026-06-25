@@ -15,11 +15,13 @@
 mod config;
 mod error;
 mod logging;
+mod resolver;
 mod server;
 
 pub use config::Config;
 pub use error::ConfigError;
 pub use logging::{LogFormat, LogLevel, LoggingConfig};
+pub use resolver::ResolverConfig;
 pub use server::{DEFAULT_PORT, ServerConfig};
 
 use std::path::Path;
