@@ -124,6 +124,9 @@ dependencies = [
 [[package]]
 name = "dnser-cache"
 version = "0.1.0"
+dependencies = [
+ "dnser-proto",
+]
 
 [[package]]
 name = "dnser-config"
@@ -162,6 +165,7 @@ name = "dnser-server"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "dnser-cache",
  "dnser-config",
  "dnser-proto",
  "dnser-resolver",

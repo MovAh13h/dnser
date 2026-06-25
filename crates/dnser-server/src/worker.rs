@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use dnser_cache::Cache;
 use dnser_resolver::Resolver;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
@@ -13,12 +14,13 @@ use tracing::{debug, warn};
 use crate::error::QueryError;
 use crate::handler::build_servfail;
 
-use dnser_proto::MAX_UDP_SIZE;
+use dnser_proto::{Header, MAX_UDP_SIZE};
 
 pub(crate) struct Worker {
     id: usize,
     socket: Arc<UdpSocket>,
     resolver: Arc<Resolver>,
+    cache: Arc<Cache>,
     shutdown: watch::Receiver<bool>,
     drain_timeout: Duration,
 }
@@ -28,6 +30,7 @@ impl Worker {
         id: usize,
         addr: SocketAddr,
         resolver: Arc<Resolver>,
+        cache: Arc<Cache>,
         shutdown: watch::Receiver<bool>,
         drain_timeout: Duration,
     ) -> Result<Self, std::io::Error> {
@@ -40,6 +43,7 @@ impl Worker {
             id,
             socket,
             resolver,
+            cache,
             shutdown,
             drain_timeout,
         })
@@ -57,8 +61,9 @@ impl Worker {
                             let data = Bytes::copy_from_slice(&buf[..len]);
                             let socket = Arc::clone(&self.socket);
                             let resolver = Arc::clone(&self.resolver);
+                            let cache = Arc::clone(&self.cache);
                             queries.spawn(async move {
-                                if let Err(e) = handle_query(&socket, &resolver, data, peer).await {
+                                if let Err(e) = handle_query(&socket, &resolver, &cache, data, peer).await {
                                     warn!(peer = %peer, err = %e, "query error");
                                 }
                             });
@@ -99,14 +104,29 @@ impl Worker {
 async fn handle_query(
     socket: &UdpSocket,
     resolver: &Resolver,
+    cache: &Cache,
     data: Bytes,
     peer: SocketAddr,
 ) -> Result<(), QueryError> {
     let query = dnser_proto::Message::parse(data)?;
     debug!(id = query.header.id, peer = %peer, "query");
 
+    if let [question] = query.questions.as_slice() {
+        if let Some(mut cached) = cache.get(question) {
+            cached.header.id = query.header.id;
+            cached.header.flags =
+                (cached.header.flags & !Header::RD) | (query.header.flags & Header::RD);
+            debug!(id = query.header.id, peer = %peer, "cache hit");
+            socket.send_to(&cached.to_bytes()?, peer).await?;
+            return Ok(());
+        }
+    }
+
     let response = match resolver.resolve(&query).await {
-        Ok(msg) => msg,
+        Ok(msg) => {
+            cache.insert(&msg);
+            msg
+        }
         Err(e) => {
             warn!(id = query.header.id, err = %e, "resolution failed");
             build_servfail(&query)

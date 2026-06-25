@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use crate::cache::CacheConfig;
 use crate::error::ConfigError;
 use crate::logging::LoggingConfig;
 use crate::resolver::ResolverConfig;
@@ -18,11 +19,19 @@ pub struct Config {
     pub logging: LoggingConfig,
     /// Forwarding resolver settings.
     pub resolver: ResolverConfig,
+    /// DNS response cache settings.
+    pub cache: CacheConfig,
 }
 
 impl Config {
     /// Rejects configurations that are structurally valid TOML but semantically wrong.
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
+        if self.cache.max_entries == 0 {
+            return Err(ConfigError::ZeroCacheCapacity);
+        }
+        if self.cache.reaper_interval_secs == 0 {
+            return Err(ConfigError::ZeroReaperInterval);
+        }
         Ok(())
     }
 }

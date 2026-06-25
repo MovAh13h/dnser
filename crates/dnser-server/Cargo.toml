@@ -13,6 +13,7 @@ keywords = ["dns", "server", "udp", "tcp", "networking"]
 categories = ["network-programming", "asynchronous"]
 
 [dependencies]
+dnser-cache = { path = "../dnser-cache" }
 dnser-config = { path = "../dnser-config" }
 dnser-proto = { path = "../dnser-proto" }
 dnser-resolver = { path = "../dnser-resolver" }

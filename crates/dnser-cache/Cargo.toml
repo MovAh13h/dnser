@@ -12,3 +12,6 @@ documentation = "https://docs.rs/dnser-cache"
 keywords = ["dns", "cache", "ttl", "networking"]
 categories = ["network-programming", "data-structures"]
 
+[dependencies]
+dnser-proto = { path = "../dnser-proto" }
+

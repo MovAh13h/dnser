@@ -12,12 +12,14 @@
 //! The config file is TOML. All sections and fields are optional; omitting them
 //! yields the built-in defaults.
 
+mod cache;
 mod config;
 mod error;
 mod logging;
 mod resolver;
 mod server;
 
+pub use cache::CacheConfig;
 pub use config::Config;
 pub use error::ConfigError;
 pub use logging::{LogFormat, LogLevel, LoggingConfig};

@@ -5,6 +5,7 @@ mod worker;
 use std::sync::Arc;
 use std::time::Duration;
 
+use dnser_cache::Cache;
 use dnser_config::Config;
 use dnser_resolver::Resolver;
 use tokio::sync::watch;
@@ -17,6 +18,19 @@ pub async fn run(config: Config) -> Result<(), std::io::Error> {
     let drain_timeout = Duration::from_secs(server_config.shutdown_drain_secs);
 
     let resolver = Arc::new(Resolver::new(config.resolver).await?);
+    let cache = Arc::new(Cache::new(config.cache.max_entries));
+    let reaper_interval = Duration::from_secs(config.cache.reaper_interval_secs);
+
+    let cache_reaper = Arc::clone(&cache);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(reaper_interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            cache_reaper.evict_expired();
+        }
+    });
+
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let mut handles = Vec::with_capacity(workers);
@@ -25,6 +39,7 @@ pub async fn run(config: Config) -> Result<(), std::io::Error> {
             id,
             server_config.listen,
             Arc::clone(&resolver),
+            Arc::clone(&cache),
             shutdown_rx.clone(),
             drain_timeout,
         )?;

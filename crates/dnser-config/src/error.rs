@@ -10,6 +10,12 @@ pub enum ConfigError {
 
     /// The config file contained invalid TOML or an unrecognised field.
     Parse(toml::de::Error),
+
+    /// `[cache] max_entries` was set to zero; the cache would never store anything.
+    ZeroCacheCapacity,
+
+    /// `[cache] reaper_interval_secs` was set to zero; the reaper would spin at 100% CPU.
+    ZeroReaperInterval,
 }
 
 impl fmt::Display for ConfigError {
@@ -17,6 +23,8 @@ impl fmt::Display for ConfigError {
         match self {
             Self::Io(path, e) => write!(f, "cannot read config file {path}: {e}"),
             Self::Parse(e) => write!(f, "failed to parse config: {e}"),
+            Self::ZeroCacheCapacity => write!(f, "[cache] max_entries must be >= 1"),
+            Self::ZeroReaperInterval => write!(f, "[cache] reaper_interval_secs must be >= 1"),
         }
     }
 }
@@ -26,6 +34,7 @@ impl std::error::Error for ConfigError {
         match self {
             Self::Io(_, e) => Some(e),
             Self::Parse(e) => Some(e),
+            Self::ZeroCacheCapacity | Self::ZeroReaperInterval => None,
         }
     }
 }
