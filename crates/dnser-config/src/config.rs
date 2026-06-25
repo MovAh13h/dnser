@@ -41,6 +41,9 @@ impl Config {
         if self.cache.reaper_interval_secs == 0 {
             return Err(ConfigError::ZeroReaperInterval);
         }
+        if self.cache.max_negative_ttl_secs == 0 {
+            return Err(ConfigError::ZeroMaxNegativeTtl);
+        }
         Ok(())
     }
 }

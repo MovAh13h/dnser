@@ -38,10 +38,11 @@ pub struct Cache {
     build_hasher: std::collections::hash_map::RandomState,
     capacity: usize,
     len: AtomicUsize,
+    max_negative_ttl: u32,
 }
 
 impl Cache {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, max_negative_ttl: u32) -> Self {
         let per_shard_hint = (capacity / NUM_SHARDS).max(1);
         let shards = (0..NUM_SHARDS)
             .map(|_| RwLock::new(HashMap::with_capacity(per_shard_hint)))
@@ -52,6 +53,7 @@ impl Cache {
             build_hasher: std::collections::hash_map::RandomState::new(),
             capacity,
             len: AtomicUsize::new(0),
+            max_negative_ttl,
         }
     }
 
@@ -108,13 +110,16 @@ impl Cache {
         let effective_ttl = match rcode {
             Rcode::NoError => {
                 if response.answers.is_empty() {
-                    // NODATA: use SOA minimum from authority section (RFC 2308 §3).
-                    soa_negative_ttl(&response.authority)
+                    // NODATA: SOA minimum, clamped by our configured cap (RFC 2308 §3 + §5).
+                    soa_negative_ttl(&response.authority).map(|t| t.min(self.max_negative_ttl))
                 } else {
                     response.answers.iter().map(|r| r.ttl).min()
                 }
             }
-            Rcode::NXDomain => soa_negative_ttl(&response.authority),
+            // NXDOMAIN: SOA minimum, clamped by our configured cap (RFC 2308 §2 + §5).
+            Rcode::NXDomain => {
+                soa_negative_ttl(&response.authority).map(|t| t.min(self.max_negative_ttl))
+            }
             _ => return,
         };
 
@@ -361,14 +366,14 @@ mod tests {
 
     #[test]
     fn hit_after_insert() {
-        let cache = Cache::new(100);
+        let cache = Cache::new(100, 3600);
         cache.insert(&noerror_response(300));
         assert!(cache.get(&question()).is_some());
     }
 
     #[test]
     fn ttls_are_rewritten_on_hit() {
-        let cache = Cache::new(100);
+        let cache = Cache::new(100, 3600);
         cache.insert(&noerror_response(300));
         cache.backdate_inserted_at(&question(), Duration::from_secs(100));
         let hit = cache.get(&question()).unwrap();
@@ -377,7 +382,7 @@ mod tests {
 
     #[test]
     fn expired_entry_returns_none() {
-        let cache = Cache::new(100);
+        let cache = Cache::new(100, 3600);
         cache.insert(&noerror_response(60));
         cache.force_expire(&question());
         assert!(cache.get(&question()).is_none());
@@ -385,21 +390,21 @@ mod tests {
 
     #[test]
     fn zero_ttl_not_cached() {
-        let cache = Cache::new(100);
+        let cache = Cache::new(100, 3600);
         cache.insert(&noerror_response(0));
         assert!(cache.is_empty());
     }
 
     #[test]
     fn servfail_not_cached() {
-        let cache = Cache::new(100);
+        let cache = Cache::new(100, 3600);
         cache.insert(&servfail_response());
         assert!(cache.is_empty());
     }
 
     #[test]
     fn truncated_not_cached() {
-        let cache = Cache::new(100);
+        let cache = Cache::new(100, 3600);
         cache.insert(&truncated_response());
         assert!(cache.is_empty());
     }
@@ -407,15 +412,80 @@ mod tests {
     #[test]
     fn nxdomain_cached_with_soa_minimum() {
         // SOA TTL=300, SOA minimum=60 → effective TTL = min(300,60) = 60.
-        let cache = Cache::new(100);
+        let cache = Cache::new(100, 3600);
         cache.insert(&nxdomain_response(300, 60));
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.stored_ttl_secs(&question()), Some(60));
     }
 
     #[test]
+    fn nxdomain_ttl_capped_by_max_negative_ttl() {
+        // SOA TTL=7200, SOA minimum=7200, but cap=300 → stored TTL must be 300.
+        let cache = Cache::new(100, 300);
+        cache.insert(&nxdomain_response(7200, 7200));
+        assert_eq!(cache.stored_ttl_secs(&question()), Some(300));
+    }
+
+    #[test]
+    fn nodata_cached_with_soa_minimum() {
+        // NOERROR + empty answers + SOA TTL=120, minimum=60 → stored TTL = 60.
+        let cache = Cache::new(100, 3600);
+        let nodata = Message {
+            header: Header {
+                id: 1,
+                flags: Header::QR | Header::RA,
+                qd_count: 1,
+                ns_count: 1,
+                ..Default::default()
+            },
+            questions: vec![question()],
+            authority: vec![soa_record(120, 60)],
+            ..Default::default()
+        };
+        cache.insert(&nodata);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.stored_ttl_secs(&question()), Some(60));
+    }
+
+    #[test]
+    fn nodata_ttl_capped_by_max_negative_ttl() {
+        let cache = Cache::new(100, 120);
+        let nodata = Message {
+            header: Header {
+                id: 1,
+                flags: Header::QR | Header::RA,
+                qd_count: 1,
+                ns_count: 1,
+                ..Default::default()
+            },
+            questions: vec![question()],
+            authority: vec![soa_record(7200, 7200)],
+            ..Default::default()
+        };
+        cache.insert(&nodata);
+        assert_eq!(cache.stored_ttl_secs(&question()), Some(120));
+    }
+
+    #[test]
+    fn nxdomain_without_soa_not_cached() {
+        let cache = Cache::new(100, 3600);
+        let no_soa = Message {
+            header: Header {
+                id: 1,
+                flags: Header::QR | (Rcode::NXDomain as u16),
+                qd_count: 1,
+                ..Default::default()
+            },
+            questions: vec![question()],
+            ..Default::default()
+        };
+        cache.insert(&no_soa);
+        assert!(cache.is_empty(), "NXDOMAIN without SOA must not be cached");
+    }
+
+    #[test]
     fn evict_expired_clears_stale_entries() {
-        let cache = Cache::new(100);
+        let cache = Cache::new(100, 3600);
         cache.insert(&noerror_response(300));
         cache.force_expire(&question());
         cache.evict_expired();
@@ -424,7 +494,7 @@ mod tests {
 
     #[test]
     fn case_insensitive_lookup() {
-        let cache = Cache::new(100);
+        let cache = Cache::new(100, 3600);
         cache.insert(&noerror_response(300));
         let q = Question {
             name: "EXAMPLE.COM".to_string(),
@@ -436,7 +506,7 @@ mod tests {
 
     #[test]
     fn capacity_enforced() {
-        let cache = Cache::new(2);
+        let cache = Cache::new(2, 3600);
         let base = noerror_response(300);
 
         cache.insert(&base);

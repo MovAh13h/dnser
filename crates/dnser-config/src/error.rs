@@ -25,6 +25,9 @@ pub enum ConfigError {
 
     /// `[server] tcp_max_connections` was set to zero.
     ZeroTcpMaxConnections,
+
+    /// `[cache] max_negative_ttl_secs` was set to zero.
+    ZeroMaxNegativeTtl,
 }
 
 impl fmt::Display for ConfigError {
@@ -41,6 +44,9 @@ impl fmt::Display for ConfigError {
             Self::ZeroTcpMaxConnections => {
                 write!(f, "[server] tcp_max_connections must be >= 1")
             }
+            Self::ZeroMaxNegativeTtl => {
+                write!(f, "[cache] max_negative_ttl_secs must be >= 1")
+            }
         }
     }
 }
@@ -54,7 +60,8 @@ impl std::error::Error for ConfigError {
             | Self::ZeroReaperInterval
             | Self::ZeroWorkers
             | Self::ZeroTcpIdleTimeout
-            | Self::ZeroTcpMaxConnections => None,
+            | Self::ZeroTcpMaxConnections
+            | Self::ZeroMaxNegativeTtl => None,
         }
     }
 }

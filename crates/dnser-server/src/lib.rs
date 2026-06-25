@@ -52,7 +52,10 @@ pub async fn start(config: Config) -> Result<ServerHandle, std::io::Error> {
     let max_connections = server_cfg.tcp_max_connections;
 
     let resolver = Arc::new(Resolver::new(config.resolver).await?);
-    let cache = Arc::new(Cache::new(config.cache.max_entries));
+    let cache = Arc::new(Cache::new(
+        config.cache.max_entries,
+        config.cache.max_negative_ttl_secs as u32,
+    ));
     let reaper_interval = Duration::from_secs(config.cache.reaper_interval_secs);
 
     let cache_reaper = Arc::clone(&cache);

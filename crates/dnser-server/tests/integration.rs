@@ -1,4 +1,6 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use dnser_config::{CacheConfig, Config, ResolverConfig, ServerConfig};
@@ -48,6 +50,7 @@ async fn start_server_with(upstream: SocketAddr, tcp_idle_timeout_secs: u64) -> 
         cache: CacheConfig {
             max_entries: 100,
             reaper_interval_secs: 60,
+            max_negative_ttl_secs: 3600,
         },
         ..Default::default()
     };
@@ -81,6 +84,27 @@ fn make_edns_query(name: &str, qtype: RecordType, udp_payload: u16) -> Message {
     });
     q.header.ar_count = 1;
     q
+}
+
+/// Spins up a counting mock upstream; returns the socket address and a hit counter.
+async fn mock_upstream_counted(
+    respond: impl Fn(&[u8]) -> Vec<u8> + Send + 'static,
+) -> (SocketAddr, Arc<AtomicUsize>) {
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let addr = socket.local_addr().unwrap();
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter2 = Arc::clone(&counter);
+    tokio::spawn(async move {
+        let mut buf = [0u8; 4096];
+        while let Ok((n, peer)) = socket.recv_from(&mut buf).await {
+            counter2.fetch_add(1, Ordering::SeqCst);
+            let resp = respond(&buf[..n]);
+            if !resp.is_empty() {
+                let _ = socket.send_to(&resp, peer).await;
+            }
+        }
+    });
+    (addr, counter)
 }
 
 /// Mock upstream: echoes the query back as a minimal valid response.
@@ -129,6 +153,73 @@ fn large_response(query_bytes: &[u8]) -> Vec<u8> {
         },
         questions: query.questions,
         answers,
+        ..Default::default()
+    }
+    .to_bytes()
+    .unwrap()
+    .to_vec()
+}
+
+fn soa_record(zone: &str, ttl: u32, minimum: u32) -> ResourceRecord {
+    ResourceRecord {
+        name: zone.to_string(),
+        class: Class::IN,
+        ttl,
+        rdata: RData::SOA {
+            mname: format!("ns1.{zone}"),
+            rname: format!("admin.{zone}"),
+            serial: 1,
+            refresh: 3600,
+            retry: 600,
+            expire: 86400,
+            minimum,
+        },
+    }
+}
+
+/// Mock upstream: returns NXDOMAIN with SOA (TTL 60, minimum 60).
+fn nxdomain_response(query_bytes: &[u8]) -> Vec<u8> {
+    let query = Message::try_from(query_bytes).unwrap();
+    let zone = query
+        .questions
+        .first()
+        .map(|q| q.name.clone())
+        .unwrap_or_else(|| "example.com".to_string());
+    Message {
+        header: Header {
+            id: query.header.id,
+            flags: Header::QR | Header::RA | (dnser_proto::Rcode::NXDomain as u16),
+            qd_count: query.header.qd_count,
+            ns_count: 1,
+            ..Default::default()
+        },
+        questions: query.questions,
+        authority: vec![soa_record(&zone, 60, 60)],
+        ..Default::default()
+    }
+    .to_bytes()
+    .unwrap()
+    .to_vec()
+}
+
+/// Mock upstream: returns NODATA (NOERROR, empty answers) with SOA (TTL 60, minimum 60).
+fn nodata_response(query_bytes: &[u8]) -> Vec<u8> {
+    let query = Message::try_from(query_bytes).unwrap();
+    let zone = query
+        .questions
+        .first()
+        .map(|q| q.name.clone())
+        .unwrap_or_else(|| "example.com".to_string());
+    Message {
+        header: Header {
+            id: query.header.id,
+            flags: Header::QR | Header::RA,
+            qd_count: query.header.qd_count,
+            ns_count: 1,
+            ..Default::default()
+        },
+        questions: query.questions,
+        authority: vec![soa_record(&zone, 60, 60)],
         ..Default::default()
     }
     .to_bytes()
@@ -510,6 +601,134 @@ async fn edns_options_are_not_forwarded_server_opts_empty() {
     assert!(
         matches!(&opt.rdata, RData::OPT(opts) if opts.is_empty()),
         "server OPT must carry no options"
+    );
+
+    server.shutdown().await;
+}
+
+// ── Negative cache tests ──────────────────────────────────────────────────────
+
+async fn udp_query(server_addr: SocketAddr, query: &Message) -> Message {
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    socket
+        .send_to(&query.to_bytes().unwrap(), server_addr)
+        .await
+        .unwrap();
+    let mut buf = [0u8; 4096];
+    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
+    Message::try_from(&buf[..n]).unwrap()
+}
+
+#[tokio::test]
+async fn nxdomain_response_is_cached() {
+    let (upstream, hits) = mock_upstream_counted(nxdomain_response).await;
+    let server = start_server(upstream).await;
+    let query = make_query("nx.example.com", RecordType::A);
+
+    // First query — hits upstream, gets NXDOMAIN.
+    let r1 = udp_query(server.udp_addr, &query).await;
+    assert!(r1.header.is_response());
+    assert_eq!(
+        r1.header.rcode(),
+        Ok(dnser_proto::Rcode::NXDomain),
+        "first query must return NXDOMAIN"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    // Second query — must be served from cache, not from upstream.
+    let r2 = udp_query(server.udp_addr, &query).await;
+    assert_eq!(
+        r2.header.rcode(),
+        Ok(dnser_proto::Rcode::NXDomain),
+        "cached response must still be NXDOMAIN"
+    );
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "upstream must not be hit again"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn nodata_response_is_cached() {
+    let (upstream, hits) = mock_upstream_counted(nodata_response).await;
+    let server = start_server(upstream).await;
+    let query = make_query("nodata.example.com", RecordType::AAAA);
+
+    // First query — hits upstream, gets NODATA (NOERROR, empty answers).
+    let r1 = udp_query(server.udp_addr, &query).await;
+    assert!(r1.header.is_response());
+    assert_eq!(r1.header.rcode(), Ok(dnser_proto::Rcode::NoError));
+    assert!(
+        r1.answers.is_empty(),
+        "NODATA response must have no answers"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    // Second query — must be served from cache.
+    let r2 = udp_query(server.udp_addr, &query).await;
+    assert_eq!(r2.header.rcode(), Ok(dnser_proto::Rcode::NoError));
+    assert!(r2.answers.is_empty());
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "upstream must not be hit again"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn nxdomain_ttl_decrements_across_requests() {
+    let (upstream, _) = mock_upstream_counted(nxdomain_response).await;
+    let server = start_server(upstream).await;
+    let query = make_query("nx2.example.com", RecordType::A);
+
+    let r1 = udp_query(server.udp_addr, &query).await;
+    let soa1_ttl = r1
+        .authority
+        .iter()
+        .find(|rr| matches!(rr.rdata, RData::SOA { .. }))
+        .map(|rr| rr.ttl)
+        .expect("NXDOMAIN response must include SOA");
+
+    // Advance time a bit, then check the TTL decremented.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    let r2 = udp_query(server.udp_addr, &query).await;
+    let soa2_ttl = r2
+        .authority
+        .iter()
+        .find(|rr| matches!(rr.rdata, RData::SOA { .. }))
+        .map(|rr| rr.ttl)
+        .expect("cached NXDOMAIN must include SOA");
+
+    assert!(
+        soa2_ttl < soa1_ttl,
+        "SOA TTL must decrement on cache hit (was {soa1_ttl}, now {soa2_ttl})"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn tcp_nxdomain_response_is_cached() {
+    let (upstream, hits) = mock_upstream_counted(nxdomain_response).await;
+    let server = start_server(upstream).await;
+    let query = make_query("nx3.example.com", RecordType::A);
+
+    let r1 = tcp_query(server.tcp_addr, &query).await;
+    assert_eq!(r1.header.rcode(), Ok(dnser_proto::Rcode::NXDomain));
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    let r2 = tcp_query(server.tcp_addr, &query).await;
+    assert_eq!(r2.header.rcode(), Ok(dnser_proto::Rcode::NXDomain));
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "upstream must not be hit again"
     );
 
     server.shutdown().await;
