@@ -55,3 +55,18 @@ fn malformed_toml_is_an_error() {
     let f = config_file("this is not [ valid toml");
     assert!(matches!(load(Some(f.path())), Err(ConfigError::Parse(_))));
 }
+
+#[test]
+fn zero_workers_is_an_error() {
+    let f = config_file("[server]\nworkers = 0");
+    assert!(matches!(load(Some(f.path())), Err(ConfigError::ZeroWorkers)));
+}
+
+#[test]
+fn zero_cache_capacity_is_an_error() {
+    let f = config_file("[cache]\nmax_entries = 0");
+    assert!(matches!(
+        load(Some(f.path())),
+        Err(ConfigError::ZeroCacheCapacity)
+    ));
+}

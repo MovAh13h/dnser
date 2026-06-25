@@ -76,8 +76,8 @@ impl UpstreamSocket {
     async fn query(&self, query: &Message, timeout: Duration) -> Result<Message, ResolveError> {
         let original_id = query.header.id;
 
-        // Serialize once, then patch the ID and RD bit in-place — no Message::clone() needed.
-        let mut bytes = query.to_bytes()?.to_vec();
+        // Serialize once into a mutable buffer, then patch the ID and RD bit in-place.
+        let mut bytes = query.to_bytes_mut()?;
 
         let (tx, rx) = oneshot::channel();
         let assigned_id = self.allocate_and_insert(tx)?;

@@ -74,6 +74,9 @@ impl Writer {
             }
 
             let label = label.as_bytes();
+            if label.is_empty() {
+                return Err(WriteError::EmptyLabel);
+            }
             if label.len() > 63 {
                 return Err(WriteError::LabelTooLong);
             }
@@ -89,6 +92,10 @@ impl Writer {
 
     pub fn finish(self) -> Bytes {
         self.buf.freeze()
+    }
+
+    pub fn into_inner(self) -> BytesMut {
+        self.buf
     }
 }
 

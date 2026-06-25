@@ -26,6 +26,9 @@ pub struct Config {
 impl Config {
     /// Rejects configurations that are structurally valid TOML but semantically wrong.
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
+        if self.server.workers == 0 {
+            return Err(ConfigError::ZeroWorkers);
+        }
         if self.cache.max_entries == 0 {
             return Err(ConfigError::ZeroCacheCapacity);
         }

@@ -36,6 +36,7 @@ impl std::error::Error for ParseError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WriteError {
     LabelTooLong,
+    EmptyLabel,
     TxtChunkTooLong,
 }
 
@@ -43,6 +44,7 @@ impl fmt::Display for WriteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::LabelTooLong => write!(f, "label exceeds 63 bytes"),
+            Self::EmptyLabel => write!(f, "domain name contains an empty label"),
             Self::TxtChunkTooLong => write!(f, "TXT chunk exceeds 255 bytes"),
         }
     }

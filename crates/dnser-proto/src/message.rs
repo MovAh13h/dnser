@@ -1,11 +1,17 @@
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 
+use crate::MAX_UDP_SIZE;
 use crate::error::{ParseError, WriteError};
 use crate::header::Header;
 use crate::question::Question;
 use crate::reader::Reader;
 use crate::resource_record::ResourceRecord;
 use crate::writer::Writer;
+
+// Minimum wire size of a resource record (2-byte compressed name + type + class + ttl + rdlen).
+const MIN_RR_BYTES: usize = 12;
+// Hard cap on section capacity to prevent large allocations from malformed counts.
+const MAX_SECTION_CAP: usize = MAX_UDP_SIZE / MIN_RR_BYTES;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Message {
@@ -16,34 +22,25 @@ pub struct Message {
     pub additional: Vec<ResourceRecord>,
 }
 
+fn parse_section<T, F>(r: &mut Reader, count: u16, parse: F) -> Result<Vec<T>, ParseError>
+where
+    F: Fn(&mut Reader) -> Result<T, ParseError>,
+{
+    let mut v = Vec::with_capacity((count as usize).min(MAX_SECTION_CAP));
+    for _ in 0..count {
+        v.push(parse(r)?);
+    }
+    Ok(v)
+}
+
 impl Message {
     pub fn parse(buf: Bytes) -> Result<Self, ParseError> {
         let mut r = Reader::new(buf);
         let header = Header::parse(&mut r)?;
-
-        // TODO: cap with_capacity to a safe max once dnser-server clarifies expected packet sizes.
-        // Untrusted counts (e.g. an_count=65535 on a 12-byte packet) cause large allocations
-        // before hitting UnexpectedEof. Correctness is unaffected; this is hygiene only.
-        let mut questions = Vec::with_capacity(header.qd_count as usize);
-        for _ in 0..header.qd_count {
-            questions.push(Question::parse(&mut r)?);
-        }
-
-        let mut answers = Vec::with_capacity(header.an_count as usize);
-        for _ in 0..header.an_count {
-            answers.push(ResourceRecord::parse(&mut r)?);
-        }
-
-        let mut authority = Vec::with_capacity(header.ns_count as usize);
-        for _ in 0..header.ns_count {
-            authority.push(ResourceRecord::parse(&mut r)?);
-        }
-
-        let mut additional = Vec::with_capacity(header.ar_count as usize);
-        for _ in 0..header.ar_count {
-            additional.push(ResourceRecord::parse(&mut r)?);
-        }
-
+        let questions = parse_section(&mut r, header.qd_count, Question::parse)?;
+        let answers = parse_section(&mut r, header.an_count, ResourceRecord::parse)?;
+        let authority = parse_section(&mut r, header.ns_count, ResourceRecord::parse)?;
+        let additional = parse_section(&mut r, header.ar_count, ResourceRecord::parse)?;
         Ok(Self {
             header,
             questions,
@@ -53,7 +50,7 @@ impl Message {
         })
     }
 
-    pub fn to_bytes(&self) -> Result<Bytes, WriteError> {
+    fn build_writer(&self) -> Result<Writer, WriteError> {
         let mut w = Writer::new();
         self.header.write(&mut w);
         for q in &self.questions {
@@ -68,7 +65,17 @@ impl Message {
         for rr in &self.additional {
             rr.write(&mut w)?;
         }
-        Ok(w.finish())
+        Ok(w)
+    }
+
+    pub fn to_bytes(&self) -> Result<Bytes, WriteError> {
+        Ok(self.build_writer()?.finish())
+    }
+
+    /// Serializes the message into a `BytesMut`, useful when the caller needs
+    /// to patch bytes in place (e.g. rewriting the query ID) before sending.
+    pub fn to_bytes_mut(&self) -> Result<BytesMut, WriteError> {
+        Ok(self.build_writer()?.into_inner())
     }
 }
 

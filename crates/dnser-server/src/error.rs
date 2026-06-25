@@ -29,6 +29,16 @@ impl From<dnser_proto::WriteError> for QueryError {
     }
 }
 
+impl std::error::Error for QueryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Parse(e) => Some(e),
+            Self::Write(e) => Some(e),
+            Self::Io(e) => Some(e),
+        }
+    }
+}
+
 impl From<std::io::Error> for QueryError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)

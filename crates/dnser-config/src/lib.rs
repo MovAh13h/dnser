@@ -39,7 +39,7 @@ use std::path::Path;
 /// Returns [`ConfigError`] if:
 /// - the file cannot be read ([`ConfigError::Io`])
 /// - the TOML is malformed ([`ConfigError::Parse`])
-/// - a value is semantically invalid ([`ConfigError::EmptyListen`], [`ConfigError::ZeroWorkers`])
+/// - a value is semantically invalid (e.g. [`ConfigError::ZeroWorkers`], [`ConfigError::ZeroCacheCapacity`])
 pub fn load(path: Option<&Path>) -> Result<Config, ConfigError> {
     let config: Config = match path {
         Some(p) => {
