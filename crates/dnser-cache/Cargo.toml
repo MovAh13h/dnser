@@ -15,3 +15,6 @@ categories = ["network-programming", "data-structures"]
 [dependencies]
 dnser-proto = { path = "../dnser-proto" }
 
+[dev-dependencies]
+dnser-testing = { path = "../dnser-testing" }
+

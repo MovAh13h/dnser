@@ -268,100 +268,40 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use dnser_proto::{Class, Header, Message, Question, RData, Rcode, RecordType, ResourceRecord};
+    use dnser_proto::{Message, Question, RecordType, ResourceRecord};
+    use dnser_testing::{fixtures, soa_record as testing_soa};
 
     use super::*;
 
+    const ZONE: &str = "example.com";
+    const IP: Ipv4Addr = Ipv4Addr::new(93, 184, 216, 34);
+
     fn question() -> Question {
-        Question {
-            name: "example.com".to_string(),
-            qtype: RecordType::A,
-            qclass: Class::IN,
-        }
+        fixtures::question(ZONE, RecordType::A)
     }
 
     fn a_record(ttl: u32) -> ResourceRecord {
-        ResourceRecord {
-            name: "example.com".to_string(),
-            class: Class::IN,
-            ttl,
-            rdata: RData::A(Ipv4Addr::new(93, 184, 216, 34)),
-        }
+        fixtures::a_record(ZONE, IP, ttl)
     }
 
     fn noerror_response(ttl: u32) -> Message {
-        Message {
-            header: Header {
-                id: 1,
-                flags: Header::QR | Header::RD | Header::RA,
-                qd_count: 1,
-                an_count: 1,
-                ..Default::default()
-            },
-            questions: vec![question()],
-            answers: vec![a_record(ttl)],
-            ..Default::default()
-        }
+        fixtures::noerror(question(), vec![a_record(ttl)])
     }
 
     fn servfail_response() -> Message {
-        Message {
-            header: Header {
-                id: 1,
-                flags: Header::QR | (Rcode::ServFail as u16),
-                qd_count: 1,
-                ..Default::default()
-            },
-            questions: vec![question()],
-            ..Default::default()
-        }
+        fixtures::servfail(question())
     }
 
     fn truncated_response() -> Message {
-        Message {
-            header: Header {
-                id: 1,
-                flags: Header::QR | Header::TC | Header::RD,
-                qd_count: 1,
-                an_count: 1,
-                ..Default::default()
-            },
-            questions: vec![question()],
-            answers: vec![a_record(300)],
-            ..Default::default()
-        }
+        fixtures::truncated(question(), vec![a_record(300)])
     }
 
     fn soa_record(soa_ttl: u32, minimum: u32) -> ResourceRecord {
-        ResourceRecord {
-            name: "example.com".to_string(),
-            class: Class::IN,
-            ttl: soa_ttl,
-            rdata: RData::SOA {
-                mname: "ns1.example.com".to_string(),
-                rname: "admin.example.com".to_string(),
-                serial: 1,
-                refresh: 3600,
-                retry: 600,
-                expire: 86400,
-                minimum,
-            },
-        }
+        testing_soa(ZONE, soa_ttl, minimum)
     }
 
     fn nxdomain_response(soa_ttl: u32, minimum: u32) -> Message {
-        Message {
-            header: Header {
-                id: 1,
-                flags: Header::QR | (Rcode::NXDomain as u16),
-                qd_count: 1,
-                ns_count: 1,
-                ..Default::default()
-            },
-            questions: vec![question()],
-            authority: vec![soa_record(soa_ttl, minimum)],
-            ..Default::default()
-        }
+        fixtures::nxdomain(question(), soa_record(soa_ttl, minimum))
     }
 
     #[test]
@@ -430,19 +370,7 @@ mod tests {
     fn nodata_cached_with_soa_minimum() {
         // NOERROR + empty answers + SOA TTL=120, minimum=60 → stored TTL = 60.
         let cache = Cache::new(100, 3600);
-        let nodata = Message {
-            header: Header {
-                id: 1,
-                flags: Header::QR | Header::RA,
-                qd_count: 1,
-                ns_count: 1,
-                ..Default::default()
-            },
-            questions: vec![question()],
-            authority: vec![soa_record(120, 60)],
-            ..Default::default()
-        };
-        cache.insert(&nodata);
+        cache.insert(&fixtures::nodata(question(), soa_record(120, 60)));
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.stored_ttl_secs(&question()), Some(60));
     }
@@ -450,35 +378,17 @@ mod tests {
     #[test]
     fn nodata_ttl_capped_by_max_negative_ttl() {
         let cache = Cache::new(100, 120);
-        let nodata = Message {
-            header: Header {
-                id: 1,
-                flags: Header::QR | Header::RA,
-                qd_count: 1,
-                ns_count: 1,
-                ..Default::default()
-            },
-            questions: vec![question()],
-            authority: vec![soa_record(7200, 7200)],
-            ..Default::default()
-        };
-        cache.insert(&nodata);
+        cache.insert(&fixtures::nodata(question(), soa_record(7200, 7200)));
         assert_eq!(cache.stored_ttl_secs(&question()), Some(120));
     }
 
     #[test]
     fn nxdomain_without_soa_not_cached() {
         let cache = Cache::new(100, 3600);
-        let no_soa = Message {
-            header: Header {
-                id: 1,
-                flags: Header::QR | (Rcode::NXDomain as u16),
-                qd_count: 1,
-                ..Default::default()
-            },
-            questions: vec![question()],
-            ..Default::default()
-        };
+        // Start from a well-formed NXDOMAIN, then strip the SOA out of authority.
+        let mut no_soa = fixtures::nxdomain(question(), soa_record(60, 60));
+        no_soa.authority.clear();
+        no_soa.header.ns_count = 0;
         cache.insert(&no_soa);
         assert!(cache.is_empty(), "NXDOMAIN without SOA must not be cached");
     }
@@ -496,11 +406,7 @@ mod tests {
     fn case_insensitive_lookup() {
         let cache = Cache::new(100, 3600);
         cache.insert(&noerror_response(300));
-        let q = Question {
-            name: "EXAMPLE.COM".to_string(),
-            qtype: RecordType::A,
-            qclass: Class::IN,
-        };
+        let q = fixtures::question("EXAMPLE.COM", RecordType::A);
         assert!(cache.get(&q).is_some());
     }
 

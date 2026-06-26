@@ -13,6 +13,7 @@ use dnser_net::{read_framed, write_framed};
 use dnser_proto::{Class, Header, Message, Question, RData, RecordType, ResourceRecord};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
+pub mod fixtures;
 pub mod mocks;
 
 // ── Query builders ───────────────────────────────────────────────────────────

@@ -126,6 +126,7 @@ name = "dnser-cache"
 version = "0.1.0"
 dependencies = [
  "dnser-proto",
+ "dnser-testing",
 ]
 
 [[package]]
