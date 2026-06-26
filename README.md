@@ -3,7 +3,7 @@
 [![CI](https://github.com/MovAh13h/dnser/actions/workflows/ci.yml/badge.svg)](https://github.com/MovAh13h/dnser/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A fast, RFC-compliant DNS forwarding resolver in Rust.
+A fast DNS forwarding resolver in Rust.
 
 `dnser` listens for DNS queries over UDP and TCP, races them across the upstream resolvers you configure, and caches the answers — positive *and* negative — with the right TTL semantics. It is designed to be the kind of resolver you drop in front of a fleet of hosts, a container network, or your laptop, and forget about.
 
@@ -25,7 +25,7 @@ clients ──▶ dnser ──┬──▶ 1.1.1.1
 - **SO_REUSEPORT** worker pool — N kernel-balanced UDP sockets on the same port
 - **Backpressure** — bounded in-flight UDP queries and bounded simultaneous TCP connections
 - **Graceful shutdown** on SIGTERM / Ctrl-C with bounded drain
-- **Structured logging** via `tracing` — pretty for humans, JSON for log pipelines
+- **Structured logging** pretty for humans, JSON for log pipelines
 
 ## Install
 
@@ -144,14 +144,6 @@ async fn main() -> std::io::Result<()> {
 ```
 
 `start()` returns immediately; the server is already accepting queries. `shutdown()` triggers a graceful drain.
-
-## RFCs implemented
-
-- **RFC 1035** — DNS wire format, UDP/TCP transport, truncation
-- **RFC 2308** — Negative caching (NXDOMAIN, NODATA) using SOA `MINIMUM`
-- **RFC 5452 §9.2** — Random source-port and 16-bit query ID for upstream queries
-- **RFC 6891** — EDNS(0): OPT pseudo-RR, advertised UDP payload size, BADVERS
-- **RFC 7766** — DNS-over-TCP: framing, idle timeout, connection limits
 
 ## Repository layout
 
