@@ -3,15 +3,15 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use dnser_config::{CacheConfig, Config, ResolverConfig, ServerConfig};
-use dnser_net::{read_framed as net_read_framed, write_framed as net_write_framed};
-use dnser_proto::{Class, EdnsOption, Header, Message, RData, RecordType, ResourceRecord};
+use dnser_net::{read_framed, write_framed};
+use dnser_proto::{Message, RData, RecordType, ResourceRecord};
 use dnser_server::ServerHandle;
 use dnser_testing::{
-    make_query, spawn_udp_responder as mock_upstream,
-    spawn_udp_responder_counted as mock_upstream_counted,
+    make_edns_query, make_query, mocks, spawn_udp_responder as mock_upstream,
+    spawn_udp_responder_counted as mock_upstream_counted, tcp_query, udp_query,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::TcpStream;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,159 +42,11 @@ async fn start_server_with(upstream: SocketAddr, tcp_idle_timeout_secs: u64) -> 
     dnser_server::start(config).await.unwrap()
 }
 
-fn make_edns_query(name: &str, qtype: RecordType, udp_payload: u16) -> Message {
-    let mut q = make_query(name, qtype);
-    q.additional.push(ResourceRecord::edns_opt(udp_payload));
-    q.header.ar_count = 1;
-    q
-}
-
-/// Mock upstream: echoes the query back as a minimal valid response.
-fn echo_response(query_bytes: &[u8]) -> Vec<u8> {
-    let query = Message::try_from(query_bytes).unwrap();
-    Message {
-        header: Header {
-            id: query.header.id,
-            flags: Header::QR | Header::RA | (query.header.flags & Header::RD),
-            qd_count: query.header.qd_count,
-            ..Default::default()
-        },
-        questions: query.questions,
-        ..Default::default()
-    }
-    .to_bytes()
-    .unwrap()
-    .to_vec()
-}
-
-/// Mock upstream: returns 50 A records whose combined wire size exceeds 512 bytes.
-/// (header 12 + question ~17 + 50 × 16-byte A records = ~829 bytes)
-fn large_response(query_bytes: &[u8]) -> Vec<u8> {
-    let query = Message::try_from(query_bytes).unwrap();
-    let name = query
-        .questions
-        .first()
-        .map(|q| q.name.clone())
-        .unwrap_or_default();
-    let answers: Vec<ResourceRecord> = (0u8..50)
-        .map(|i| ResourceRecord {
-            name: name.clone(),
-            class: Class::IN,
-            ttl: 300,
-            rdata: RData::A(std::net::Ipv4Addr::new(10, 0, 0, i)),
-        })
-        .collect();
-    let an_count = answers.len() as u16;
-    Message {
-        header: Header {
-            id: query.header.id,
-            flags: Header::QR | Header::RA,
-            qd_count: 1,
-            an_count,
-            ..Default::default()
-        },
-        questions: query.questions,
-        answers,
-        ..Default::default()
-    }
-    .to_bytes()
-    .unwrap()
-    .to_vec()
-}
-
-fn soa_record(zone: &str, ttl: u32, minimum: u32) -> ResourceRecord {
-    ResourceRecord {
-        name: zone.to_string(),
-        class: Class::IN,
-        ttl,
-        rdata: RData::SOA {
-            mname: format!("ns1.{zone}"),
-            rname: format!("admin.{zone}"),
-            serial: 1,
-            refresh: 3600,
-            retry: 600,
-            expire: 86400,
-            minimum,
-        },
-    }
-}
-
-/// Mock upstream: returns NXDOMAIN with SOA (TTL 60, minimum 60).
-fn nxdomain_response(query_bytes: &[u8]) -> Vec<u8> {
-    let query = Message::try_from(query_bytes).unwrap();
-    let zone = query
-        .questions
-        .first()
-        .map(|q| q.name.clone())
-        .unwrap_or_else(|| "example.com".to_string());
-    Message {
-        header: Header {
-            id: query.header.id,
-            flags: Header::QR | Header::RA | (dnser_proto::Rcode::NXDomain as u16),
-            qd_count: query.header.qd_count,
-            ns_count: 1,
-            ..Default::default()
-        },
-        questions: query.questions,
-        authority: vec![soa_record(&zone, 60, 60)],
-        ..Default::default()
-    }
-    .to_bytes()
-    .unwrap()
-    .to_vec()
-}
-
-/// Mock upstream: returns NODATA (NOERROR, empty answers) with SOA (TTL 60, minimum 60).
-fn nodata_response(query_bytes: &[u8]) -> Vec<u8> {
-    let query = Message::try_from(query_bytes).unwrap();
-    let zone = query
-        .questions
-        .first()
-        .map(|q| q.name.clone())
-        .unwrap_or_else(|| "example.com".to_string());
-    Message {
-        header: Header {
-            id: query.header.id,
-            flags: Header::QR | Header::RA,
-            qd_count: query.header.qd_count,
-            ns_count: 1,
-            ..Default::default()
-        },
-        questions: query.questions,
-        authority: vec![soa_record(&zone, 60, 60)],
-        ..Default::default()
-    }
-    .to_bytes()
-    .unwrap()
-    .to_vec()
-}
-
-// ── TCP helpers ───────────────────────────────────────────────────────────────
-
-async fn write_msg(stream: &mut TcpStream, msg: &Message) {
-    let bytes = msg.to_bytes().unwrap();
-    net_write_framed(stream, &bytes).await.unwrap();
-}
-
-async fn read_msg(stream: &mut TcpStream) -> Message {
-    let body = net_read_framed(stream)
-        .await
-        .unwrap()
-        .expect("stream closed before a complete message arrived");
-    Message::parse(body).unwrap()
-}
-
-async fn tcp_query(addr: SocketAddr, query: &Message) -> Message {
-    let mut stream = TcpStream::connect(addr).await.unwrap();
-    write_msg(&mut stream, query).await;
-    read_msg(&mut stream).await
-}
-
 // ── TCP tests ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn tcp_single_query() {
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     let server = start_server(upstream).await;
 
     let query = make_query("example.com", RecordType::A);
@@ -209,7 +61,7 @@ async fn tcp_single_query() {
 
 #[tokio::test]
 async fn tcp_pipelining() {
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     let server = start_server(upstream).await;
 
     let mut stream = TcpStream::connect(server.tcp_addr).await.unwrap();
@@ -217,11 +69,11 @@ async fn tcp_pipelining() {
     let q2 = make_query("two.example.com", RecordType::AAAA);
 
     // Send both queries back-to-back before reading any response.
-    write_msg(&mut stream, &q1).await;
-    write_msg(&mut stream, &q2).await;
+    write_framed(&mut stream, &q1.to_bytes().unwrap()).await.unwrap();
+    write_framed(&mut stream, &q2.to_bytes().unwrap()).await.unwrap();
 
-    let r1 = read_msg(&mut stream).await;
-    let r2 = read_msg(&mut stream).await;
+    let r1 = Message::parse(read_framed(&mut stream).await.unwrap().unwrap()).unwrap();
+    let r2 = Message::parse(read_framed(&mut stream).await.unwrap().unwrap()).unwrap();
 
     assert_eq!(r1.header.id, q1.header.id);
     assert_eq!(r2.header.id, q2.header.id);
@@ -231,7 +83,7 @@ async fn tcp_pipelining() {
 
 #[tokio::test]
 async fn tcp_idle_timeout_closes_connection() {
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     // Very short idle timeout so the test doesn't take long.
     let server = start_server_with(upstream, 1).await;
 
@@ -249,7 +101,7 @@ async fn tcp_idle_timeout_closes_connection() {
 
 #[tokio::test]
 async fn tcp_zero_length_message_closes_connection() {
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     let server = start_server(upstream).await;
 
     let mut stream = TcpStream::connect(server.tcp_addr).await.unwrap();
@@ -269,7 +121,7 @@ async fn tcp_zero_length_message_closes_connection() {
 
 #[tokio::test]
 async fn tcp_client_disconnect_mid_message_does_not_crash_server() {
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     let server = start_server(upstream).await;
 
     {
@@ -291,19 +143,12 @@ async fn tcp_client_disconnect_mid_message_does_not_crash_server() {
 
 #[tokio::test]
 async fn udp_large_response_sets_tc_bit() {
-    let upstream = mock_upstream(large_response).await;
+    // 50 A records is enough to bust the 512-byte UDP limit.
+    let upstream = mock_upstream(mocks::many_a_records(50)).await;
     let server = start_server(upstream).await;
 
     let query = make_query("example.com", RecordType::A);
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
-        .await
-        .unwrap();
-
-    let mut buf = [0u8; 4096];
-    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
-    let response = Message::try_from(&buf[..n]).unwrap();
+    let response = udp_query(server.udp_addr, &query).await;
 
     assert!(response.header.is_response());
     assert!(response.header.is_truncated());
@@ -315,20 +160,13 @@ async fn udp_large_response_sets_tc_bit() {
 
 #[tokio::test]
 async fn tcp_serves_full_response_after_udp_truncation() {
-    let upstream = mock_upstream(large_response).await;
+    let upstream = mock_upstream(mocks::many_a_records(50)).await;
     let server = start_server(upstream).await;
 
     let query = make_query("example.com", RecordType::A);
 
     // Step 1: UDP returns TC=1.
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
-        .await
-        .unwrap();
-    let mut buf = [0u8; 4096];
-    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
-    let udp_resp = Message::try_from(&buf[..n]).unwrap();
+    let udp_resp = udp_query(server.udp_addr, &query).await;
     assert!(udp_resp.header.is_truncated());
 
     // Step 2: TCP returns the full answer.
@@ -343,7 +181,7 @@ async fn tcp_serves_full_response_after_udp_truncation() {
 
 #[tokio::test]
 async fn tcp_cache_hit_returns_valid_response() {
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     let server = start_server(upstream).await;
 
     let query = make_query("example.com", RecordType::A);
@@ -362,59 +200,32 @@ async fn tcp_cache_hit_returns_valid_response() {
 
 // ── EDNS(0) tests ─────────────────────────────────────────────────────────────
 
-fn has_opt(msg: &Message) -> bool {
-    msg.additional
-        .iter()
-        .any(|rr| matches!(rr.rdata, RData::OPT(_)))
-}
-
-fn opt_udp_size(msg: &Message) -> Option<u16> {
-    msg.additional
-        .iter()
-        .find(|rr| matches!(rr.rdata, RData::OPT(_)))
-        .map(|rr| u16::from(rr.class))
-}
-
 #[tokio::test]
 async fn udp_edns_query_returns_opt_record() {
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     let server = start_server(upstream).await;
 
     let query = make_edns_query("example.com", RecordType::A, 4096);
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
-        .await
-        .unwrap();
-    let mut buf = [0u8; 4096];
-    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
-    let response = Message::try_from(&buf[..n]).unwrap();
+    let response = udp_query(server.udp_addr, &query).await;
 
     assert!(response.header.is_response());
-    assert!(has_opt(&response), "response must contain OPT record");
-    assert_eq!(opt_udp_size(&response), Some(4096));
+    let opt = response.opt().expect("response must contain OPT record");
+    assert_eq!(opt.edns_udp_size(), Some(4096));
 
     server.shutdown().await;
 }
 
 #[tokio::test]
 async fn udp_non_edns_query_returns_no_opt_record() {
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     let server = start_server(upstream).await;
 
     let query = make_query("example.com", RecordType::A);
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
-        .await
-        .unwrap();
-    let mut buf = [0u8; 4096];
-    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
-    let response = Message::try_from(&buf[..n]).unwrap();
+    let response = udp_query(server.udp_addr, &query).await;
 
     assert!(response.header.is_response());
     assert!(
-        !has_opt(&response),
+        response.opt().is_none(),
         "non-EDNS query must not get OPT record"
     );
 
@@ -423,34 +234,30 @@ async fn udp_non_edns_query_returns_no_opt_record() {
 
 #[tokio::test]
 async fn tcp_edns_query_returns_opt_record() {
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     let server = start_server(upstream).await;
 
     let query = make_edns_query("example.com", RecordType::A, 4096);
     let response = tcp_query(server.tcp_addr, &query).await;
 
     assert!(response.header.is_response());
-    assert!(has_opt(&response), "TCP response must contain OPT record");
+    assert!(
+        response.opt().is_some(),
+        "TCP response must contain OPT record"
+    );
 
     server.shutdown().await;
 }
 
 #[tokio::test]
 async fn udp_edns_large_payload_not_truncated() {
-    // Client advertises 4096-byte payload, so the large response (~829 bytes)
+    // Client advertises 4096-byte payload, so a ~829-byte response
     // should be delivered in full over UDP without TC=1.
-    let upstream = mock_upstream(large_response).await;
+    let upstream = mock_upstream(mocks::many_a_records(50)).await;
     let server = start_server(upstream).await;
 
     let query = make_edns_query("example.com", RecordType::A, 4096);
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
-        .await
-        .unwrap();
-    let mut buf = [0u8; 4096];
-    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
-    let response = Message::try_from(&buf[..n]).unwrap();
+    let response = udp_query(server.udp_addr, &query).await;
 
     assert!(response.header.is_response());
     assert!(
@@ -464,35 +271,20 @@ async fn udp_edns_large_payload_not_truncated() {
 
 #[tokio::test]
 async fn edns_version_mismatch_returns_badvers() {
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     let server = start_server(upstream).await;
 
-    // Build a query with OPT version=1 (unsupported).
-    let mut query = make_query("example.com", RecordType::A);
-    let mut opt = ResourceRecord::edns_opt(4096);
-    // TTL layout: ext_rcode(8)|version(8)|flags(16); version=1 → 0x00010000
-    opt.ttl = 0x0001_0000;
-    query.additional.push(opt);
-    query.header.ar_count = 1;
+    // Build a query advertising EDNS version 1 (unsupported).
+    let mut query = make_edns_query("example.com", RecordType::A, 4096);
+    query.additional.last_mut().unwrap().set_edns_version(1);
 
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
-        .await
-        .unwrap();
-    let mut buf = [0u8; 4096];
-    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
-    let response = Message::try_from(&buf[..n]).unwrap();
+    let response = udp_query(server.udp_addr, &query).await;
 
     assert!(response.header.is_response());
-    // BADVERS: header RCODE=0, extended RCODE in OPT TTL byte 0 = 1
+    // BADVERS: header RCODE=0, extended RCODE in OPT TTL byte 0 = 1.
     assert_eq!(response.header.rcode(), Ok(dnser_proto::Rcode::NoError));
-    let opt = response
-        .additional
-        .iter()
-        .find(|rr| matches!(rr.rdata, RData::OPT(_)))
-        .expect("BADVERS response must contain OPT");
-    assert_eq!(opt.ttl >> 24, 1, "extended RCODE must be BADVERS (1)");
+    let opt = response.opt().expect("BADVERS response must contain OPT");
+    assert_eq!(opt.edns_extended_rcode(), Some(1));
 
     server.shutdown().await;
 }
@@ -501,34 +293,22 @@ async fn edns_version_mismatch_returns_badvers() {
 async fn edns_options_are_not_forwarded_server_opts_empty() {
     // A query carrying a client subnet option should receive a server OPT
     // with no options (we don't implement ECS or option forwarding).
-    let upstream = mock_upstream(echo_response).await;
+    let upstream = mock_upstream(mocks::echo).await;
     let server = start_server(upstream).await;
 
     let mut query = make_query("example.com", RecordType::A);
     let mut opt = ResourceRecord::edns_opt(4096);
-    opt.rdata = RData::OPT(vec![EdnsOption {
+    opt.rdata = RData::OPT(vec![dnser_proto::EdnsOption {
         code: 8, // ECS
         data: bytes::Bytes::from_static(&[0, 1, 24, 0, 192, 168, 1, 0]),
     }]);
     query.additional.push(opt);
     query.header.ar_count = 1;
 
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .send_to(&query.to_bytes().unwrap(), server.udp_addr)
-        .await
-        .unwrap();
-    let mut buf = [0u8; 4096];
-    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
-    let response = Message::try_from(&buf[..n]).unwrap();
+    let response = udp_query(server.udp_addr, &query).await;
 
     assert!(response.header.is_response());
-    assert!(has_opt(&response));
-    let opt = response
-        .additional
-        .iter()
-        .find(|rr| matches!(rr.rdata, RData::OPT(_)))
-        .unwrap();
+    let opt = response.opt().expect("response must contain OPT");
     assert!(
         matches!(&opt.rdata, RData::OPT(opts) if opts.is_empty()),
         "server OPT must carry no options"
@@ -539,20 +319,9 @@ async fn edns_options_are_not_forwarded_server_opts_empty() {
 
 // ── Negative cache tests ──────────────────────────────────────────────────────
 
-async fn udp_query(server_addr: SocketAddr, query: &Message) -> Message {
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .send_to(&query.to_bytes().unwrap(), server_addr)
-        .await
-        .unwrap();
-    let mut buf = [0u8; 4096];
-    let (n, _) = socket.recv_from(&mut buf).await.unwrap();
-    Message::try_from(&buf[..n]).unwrap()
-}
-
 #[tokio::test]
 async fn nxdomain_response_is_cached() {
-    let (upstream, hits) = mock_upstream_counted(nxdomain_response).await;
+    let (upstream, hits) = mock_upstream_counted(mocks::nxdomain).await;
     let server = start_server(upstream).await;
     let query = make_query("nx.example.com", RecordType::A);
 
@@ -584,7 +353,7 @@ async fn nxdomain_response_is_cached() {
 
 #[tokio::test]
 async fn nodata_response_is_cached() {
-    let (upstream, hits) = mock_upstream_counted(nodata_response).await;
+    let (upstream, hits) = mock_upstream_counted(mocks::nodata).await;
     let server = start_server(upstream).await;
     let query = make_query("nodata.example.com", RecordType::AAAA);
 
@@ -613,7 +382,7 @@ async fn nodata_response_is_cached() {
 
 #[tokio::test]
 async fn nxdomain_ttl_decrements_across_requests() {
-    let (upstream, _) = mock_upstream_counted(nxdomain_response).await;
+    let (upstream, _) = mock_upstream_counted(mocks::nxdomain).await;
     let server = start_server(upstream).await;
     let query = make_query("nx2.example.com", RecordType::A);
 
@@ -646,7 +415,7 @@ async fn nxdomain_ttl_decrements_across_requests() {
 
 #[tokio::test]
 async fn tcp_nxdomain_response_is_cached() {
-    let (upstream, hits) = mock_upstream_counted(nxdomain_response).await;
+    let (upstream, hits) = mock_upstream_counted(mocks::nxdomain).await;
     let server = start_server(upstream).await;
     let query = make_query("nx3.example.com", RecordType::A);
 
