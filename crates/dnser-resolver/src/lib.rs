@@ -14,14 +14,19 @@ use dnser_config::ResolverConfig;
 use dnser_proto::{Header, MAX_UDP_SIZE, Message};
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
+use rand::Rng;
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 use tracing::{debug, error, warn};
 
+/// Number of random allocations we attempt before falling back to a linear
+/// scan. With this many tries, collision becomes very unlikely until the
+/// in-flight map is several thousand entries deep (birthday paradox).
+const RANDOM_ID_ATTEMPTS: usize = 16;
+
 struct InFlight {
     map: HashMap<u16, oneshot::Sender<Bytes>>,
-    next_id: u16,
 }
 
 struct UpstreamSocket {
@@ -59,7 +64,6 @@ impl UpstreamSocket {
 
         let in_flight = Arc::new(Mutex::new(InFlight {
             map: HashMap::new(),
-            next_id: 0,
         }));
 
         let recv_abort =
@@ -116,21 +120,37 @@ impl UpstreamSocket {
         }
     }
 
+    /// Allocates a fresh in-flight query ID and registers `tx` against it.
+    ///
+    /// IDs are drawn at random (RFC 5452 §9.2: predictable IDs make off-path
+    /// spoofing materially easier). On the rare collision we retry a handful
+    /// of times, then fall back to a linear scan from a random starting point
+    /// so we still surface [`ResolveError::IdSpaceExhausted`] deterministically
+    /// when all 65536 IDs are in use.
     fn allocate_and_insert(&self, tx: oneshot::Sender<Bytes>) -> Result<u16, ResolveError> {
         let mut state = self.in_flight.lock().unwrap();
         let mut tx = Some(tx);
-        let start = state.next_id;
-        loop {
-            let id = state.next_id;
-            state.next_id = state.next_id.wrapping_add(1);
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..RANDOM_ID_ATTEMPTS {
+            let id: u16 = rng.r#gen();
             if let Entry::Vacant(e) = state.map.entry(id) {
                 e.insert(tx.take().unwrap());
                 return Ok(id);
             }
-            if state.next_id == start {
-                return Err(ResolveError::IdSpaceExhausted);
+        }
+
+        // Fall back to a scan from a random starting point.
+        let start: u16 = rng.r#gen();
+        for offset in 0..=u16::MAX {
+            let id = start.wrapping_add(offset);
+            if let Entry::Vacant(e) = state.map.entry(id) {
+                e.insert(tx.take().unwrap());
+                return Ok(id);
             }
         }
+
+        Err(ResolveError::IdSpaceExhausted)
     }
 }
 

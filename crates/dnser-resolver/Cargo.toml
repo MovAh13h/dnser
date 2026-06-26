@@ -18,6 +18,7 @@ dnser-net = { path = "../dnser-net" }
 dnser-proto = { path = "../dnser-proto" }
 bytes = "1"
 futures-util = "0.3"
+rand = "0.8"
 tokio = { version = "1", features = ["io-util", "net", "rt", "sync", "time"] }
 tracing = "0.1"
 
