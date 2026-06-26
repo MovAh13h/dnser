@@ -198,7 +198,14 @@ where
 /// Sends `query` to `server` over UDP from an ephemeral socket and parses the
 /// reply. Panics on I/O or parse errors.
 pub async fn udp_query(server: SocketAddr, query: &Message) -> Message {
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    // Bind the source socket in the same address family as the target so
+    // IPv6 servers are reachable from this helper.
+    let bind_addr: SocketAddr = if server.is_ipv4() {
+        "127.0.0.1:0".parse().unwrap()
+    } else {
+        "[::1]:0".parse().unwrap()
+    };
+    let socket = UdpSocket::bind(bind_addr).await.unwrap();
     socket
         .send_to(&query.to_bytes().unwrap(), server)
         .await

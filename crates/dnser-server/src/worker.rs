@@ -33,7 +33,8 @@ impl Worker {
         shutdown: watch::Receiver<bool>,
         drain_timeout: Duration,
     ) -> Result<Self, std::io::Error> {
-        let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        let domain = Domain::for_address(addr);
+        let sock = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
         sock.set_reuse_port(true)?;
         sock.set_nonblocking(true)?;
         sock.bind(&addr.into())?;

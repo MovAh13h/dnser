@@ -42,6 +42,49 @@ async fn start_server_with(upstream: SocketAddr, tcp_idle_timeout_secs: u64) -> 
     dnser_server::start(config).await.unwrap()
 }
 
+// ── Listener tests ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn server_binds_ipv6_listen_address() {
+    let upstream = mock_upstream(mocks::echo).await;
+    let config = Config {
+        server: ServerConfig {
+            listen: "[::1]:0".parse().unwrap(),
+            workers: 1,
+            ..Default::default()
+        },
+        resolver: ResolverConfig {
+            upstreams: vec![upstream],
+            timeout_ms: 500,
+        },
+        cache: CacheConfig {
+            max_entries: 100,
+            reaper_interval_secs: 60,
+            max_negative_ttl_secs: 3600,
+        },
+        ..Default::default()
+    };
+    let server = dnser_server::start(config).await.unwrap();
+
+    assert!(
+        server.udp_addr.is_ipv6(),
+        "expected IPv6 UDP bind, got {}",
+        server.udp_addr
+    );
+    assert!(
+        server.tcp_addr.is_ipv6(),
+        "expected IPv6 TCP bind, got {}",
+        server.tcp_addr
+    );
+
+    // Round-trip a query to prove the IPv6 socket actually accepts traffic.
+    let query = make_query("example.com", RecordType::A);
+    let response = udp_query(server.udp_addr, &query).await;
+    assert!(response.header.is_response());
+
+    server.shutdown().await;
+}
+
 // ── TCP tests ─────────────────────────────────────────────────────────────────
 
 #[tokio::test]
