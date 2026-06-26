@@ -98,17 +98,13 @@ impl UpstreamSocket {
                 // recv_loop already removed this entry before calling tx.send(); disarm to
                 // prevent a stale remove that could race with a new query reusing the same ID.
                 guard.disarm();
-                let mut msg = Message::parse(response_bytes)?;
-                if !msg.header.is_response() || msg.questions != query.questions {
-                    return Err(ResolveError::InvalidResponse);
-                }
+                let msg = parse_validated_response(response_bytes, query, original_id)?;
                 // RFC 1035 §4.2.1: TC=1 means the answer was truncated to fit UDP.
                 // Re-issue over TCP for the full response.
                 if msg.header.is_truncated() {
                     debug!(upstream = %self.addr, "udp response truncated, retrying over tcp");
                     return tcp::tcp_query(self.addr, query, timeout).await;
                 }
-                msg.header.id = original_id;
                 Ok(msg)
             }
             Ok(Err(_)) => {
@@ -142,6 +138,25 @@ impl Drop for UpstreamSocket {
     fn drop(&mut self) {
         self.recv_abort.abort();
     }
+}
+
+/// Parses `bytes` as the response to `query`, rejects it if the QR bit is
+/// missing or the question section doesn't match, and restores the original
+/// id in place of the on-wire one (which the resolver rewrote before sending).
+///
+/// Used by both the UDP path in [`UpstreamSocket::query`] and the TCP fallback
+/// in [`tcp::tcp_query`].
+pub(crate) fn parse_validated_response(
+    bytes: Bytes,
+    query: &Message,
+    original_id: u16,
+) -> Result<Message, ResolveError> {
+    let mut msg = Message::parse(bytes)?;
+    if !msg.header.is_response() || msg.questions != query.questions {
+        return Err(ResolveError::InvalidResponse);
+    }
+    msg.header.id = original_id;
+    Ok(msg)
 }
 
 async fn recv_loop(socket: Arc<UdpSocket>, in_flight: Arc<Mutex<InFlight>>) {

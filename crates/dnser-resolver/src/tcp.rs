@@ -40,10 +40,5 @@ async fn exchange(addr: SocketAddr, query: &Message) -> Result<Message, ResolveE
         .await?
         .ok_or(ResolveError::InvalidResponse)?;
 
-    let mut msg = Message::parse(body)?;
-    if !msg.header.is_response() || msg.questions != query.questions {
-        return Err(ResolveError::InvalidResponse);
-    }
-    msg.header.id = original_id;
-    Ok(msg)
+    crate::parse_validated_response(body, query, original_id)
 }
