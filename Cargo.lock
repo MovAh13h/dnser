@@ -190,6 +190,7 @@ dependencies = [
 name = "dnser-testing"
 version = "0.1.0"
 dependencies = [
+ "dnser-net",
  "dnser-proto",
  "tokio",
 ]

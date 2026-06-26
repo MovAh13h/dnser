@@ -37,20 +37,20 @@ impl ResourceRecord {
     /// (RFC 6891 §6.1.2 — stored in the CLASS field). `None` if not OPT.
     #[must_use]
     pub fn edns_udp_size(&self) -> Option<u16> {
-        self.is_opt().then(|| u16::from(self.class))
+        self.is_opt().then_some(u16::from(self.class))
     }
 
     /// Returns the EDNS extended RCODE — byte 0 of the OPT TTL.
     /// `None` if not OPT.
     #[must_use]
     pub fn edns_extended_rcode(&self) -> Option<u8> {
-        self.is_opt().then(|| ((self.ttl >> 24) & 0xFF) as u8)
+        self.is_opt().then_some(((self.ttl >> 24) & 0xFF) as u8)
     }
 
     /// Returns the EDNS version — byte 1 of the OPT TTL. `None` if not OPT.
     #[must_use]
     pub fn edns_version(&self) -> Option<u8> {
-        self.is_opt().then(|| ((self.ttl >> 16) & 0xFF) as u8)
+        self.is_opt().then_some(((self.ttl >> 16) & 0xFF) as u8)
     }
 
     /// Sets the extended RCODE byte of an OPT record's TTL. No-op on non-OPT.

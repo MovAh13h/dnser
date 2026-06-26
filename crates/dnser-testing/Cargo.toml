@@ -11,5 +11,6 @@ readme.workspace = true
 publish = false
 
 [dependencies]
+dnser-net = { path = "../dnser-net" }
 dnser-proto = { path = "../dnser-proto" }
 tokio = { version = "1", features = ["net", "rt", "sync"] }
