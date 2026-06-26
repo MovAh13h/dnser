@@ -157,18 +157,17 @@ impl Cache {
             }
         }
 
+        // Build the entry — including the deep response clone — outside the
+        // write lock to minimise lock-hold time and unblock concurrent readers.
         let now = Instant::now();
+        let entry = CacheEntry {
+            response: response.clone(),
+            inserted_at: now,
+            expires_at: now + Duration::from_secs(u64::from(ttl)),
+        };
+
         let mut shard = self.shards[shard_i].write().unwrap();
-        let is_new = shard
-            .insert(
-                key,
-                CacheEntry {
-                    response: response.clone(),
-                    inserted_at: now,
-                    expires_at: now + Duration::from_secs(u64::from(ttl)),
-                },
-            )
-            .is_none();
+        let is_new = shard.insert(key, entry).is_none();
         drop(shard);
 
         if is_new {
