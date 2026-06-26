@@ -14,6 +14,19 @@ pub struct ResourceRecord {
 }
 
 impl ResourceRecord {
+    /// Builds an EDNS(0) OPT pseudo-RR advertising `udp_size` (RFC 6891 §6.1.2).
+    /// Name is root, class carries the requestor's UDP payload size, TTL is zero
+    /// (extended RCODE=0, version=0, Z=0), and the RDATA carries no options.
+    #[must_use]
+    pub fn edns_opt(udp_size: u16) -> Self {
+        Self {
+            name: String::new(),
+            class: Class::from(udp_size),
+            ttl: 0,
+            rdata: RData::OPT(Vec::new()),
+        }
+    }
+
     fn record_type(&self) -> Result<RecordType, u16> {
         match &self.rdata {
             RData::A(_) => Ok(RecordType::A),
@@ -97,6 +110,16 @@ mod tests {
             .record_type(),
             Ok(RecordType::MX)
         );
+    }
+
+    #[test]
+    fn edns_opt_has_expected_shape() {
+        let opt = ResourceRecord::edns_opt(1232);
+        assert!(opt.name.is_empty());
+        assert_eq!(u16::from(opt.class), 1232);
+        assert_eq!(opt.ttl, 0);
+        assert_eq!(opt.rdata, RData::OPT(Vec::new()));
+        assert_eq!(opt.record_type(), Ok(RecordType::OPT));
     }
 
     #[test]

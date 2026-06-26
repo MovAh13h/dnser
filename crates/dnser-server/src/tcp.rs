@@ -2,10 +2,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::Bytes;
 use dnser_cache::Cache;
+use dnser_net::{read_framed, write_framed};
 use dnser_resolver::Resolver;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tracing::{debug, warn};
@@ -87,38 +86,18 @@ async fn handle_conn(
     _permit: OwnedSemaphorePermit,
 ) -> Result<(), QueryError> {
     loop {
-        // Read the 2-byte length prefix (RFC 1035 §4.2.2).
-        let mut len_buf = [0u8; 2];
-        match tokio::time::timeout(idle_timeout, stream.read_exact(&mut len_buf)).await {
+        let body = match tokio::time::timeout(idle_timeout, read_framed(&mut stream)).await {
             Err(_) => return Ok(()), // idle timeout — clean close
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
+            Ok(Ok(Some(body))) => body,
+            Ok(Ok(None)) => return Ok(()),
             Ok(Err(e)) => return Err(e.into()),
-        }
+        };
 
-        let msg_len = u16::from_be_bytes(len_buf) as usize;
-        if msg_len == 0 {
-            return Ok(());
-        }
-
-        // Read the message body.
-        let mut buf = vec![0u8; msg_len];
-        match tokio::time::timeout(idle_timeout, stream.read_exact(&mut buf)).await {
-            Err(_) => return Ok(()),
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
-            Ok(Err(e)) => return Err(e.into()),
-        }
-
-        let query = dnser_proto::Message::parse(Bytes::from(buf))?;
+        let query = dnser_proto::Message::parse(body)?;
         debug!(id = query.header.id, "tcp query");
 
         let response = process_query(resolver, cache, &query).await;
         let response_bytes = response.to_bytes()?;
-
-        // Write the 2-byte length prefix followed by the response.
-        let len = response_bytes.len() as u16;
-        stream.write_all(&len.to_be_bytes()).await?;
-        stream.write_all(&response_bytes).await?;
+        write_framed(&mut stream, &response_bytes).await?;
     }
 }

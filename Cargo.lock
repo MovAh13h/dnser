@@ -138,6 +138,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dnser-net"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "tokio",
+]
+
+[[package]]
 name = "dnser-proto"
 version = "0.1.0"
 dependencies = [
@@ -154,7 +162,9 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "dnser-config",
+ "dnser-net",
  "dnser-proto",
+ "dnser-testing",
  "futures-util",
  "tokio",
  "tracing",
@@ -167,16 +177,22 @@ dependencies = [
  "bytes",
  "dnser-cache",
  "dnser-config",
+ "dnser-net",
  "dnser-proto",
  "dnser-resolver",
+ "dnser-testing",
  "socket2 0.5.10",
  "tokio",
  "tracing",
 ]
 
 [[package]]
-name = "dnser-zone"
+name = "dnser-testing"
 version = "0.1.0"
+dependencies = [
+ "dnser-proto",
+ "tokio",
+]
 
 [[package]]
 name = "equivalent"

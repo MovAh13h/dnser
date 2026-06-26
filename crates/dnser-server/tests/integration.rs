@@ -1,34 +1,19 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use dnser_config::{CacheConfig, Config, ResolverConfig, ServerConfig};
-use dnser_proto::{
-    Class, EdnsOption, Header, Message, Question, RData, RecordType, ResourceRecord,
-};
+use dnser_net::{read_framed as net_read_framed, write_framed as net_write_framed};
+use dnser_proto::{Class, EdnsOption, Header, Message, RData, RecordType, ResourceRecord};
 use dnser_server::ServerHandle;
+use dnser_testing::{
+    make_query, spawn_udp_responder as mock_upstream,
+    spawn_udp_responder_counted as mock_upstream_counted,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-/// Spins up a mock UDP upstream. `respond` maps raw query bytes to raw response
-/// bytes; returning an empty vec suppresses the reply.
-async fn mock_upstream(respond: impl Fn(&[u8]) -> Vec<u8> + Send + 'static) -> SocketAddr {
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let addr = socket.local_addr().unwrap();
-    tokio::spawn(async move {
-        let mut buf = [0u8; 4096];
-        while let Ok((n, peer)) = socket.recv_from(&mut buf).await {
-            let resp = respond(&buf[..n]);
-            if !resp.is_empty() {
-                let _ = socket.send_to(&resp, peer).await;
-            }
-        }
-    });
-    addr
-}
 
 /// Starts the server against the given upstream and returns its handle.
 async fn start_server(upstream: SocketAddr) -> ServerHandle {
@@ -57,54 +42,11 @@ async fn start_server_with(upstream: SocketAddr, tcp_idle_timeout_secs: u64) -> 
     dnser_server::start(config).await.unwrap()
 }
 
-fn make_query(name: &str, qtype: RecordType) -> Message {
-    Message {
-        header: Header {
-            id: 1234,
-            flags: Header::RD,
-            qd_count: 1,
-            ..Default::default()
-        },
-        questions: vec![Question {
-            name: name.to_string(),
-            qtype,
-            qclass: Class::IN,
-        }],
-        ..Default::default()
-    }
-}
-
 fn make_edns_query(name: &str, qtype: RecordType, udp_payload: u16) -> Message {
     let mut q = make_query(name, qtype);
-    q.additional.push(ResourceRecord {
-        name: String::new(),
-        class: Class::from(udp_payload),
-        ttl: 0,
-        rdata: RData::OPT(Vec::new()),
-    });
+    q.additional.push(ResourceRecord::edns_opt(udp_payload));
     q.header.ar_count = 1;
     q
-}
-
-/// Spins up a counting mock upstream; returns the socket address and a hit counter.
-async fn mock_upstream_counted(
-    respond: impl Fn(&[u8]) -> Vec<u8> + Send + 'static,
-) -> (SocketAddr, Arc<AtomicUsize>) {
-    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let addr = socket.local_addr().unwrap();
-    let counter = Arc::new(AtomicUsize::new(0));
-    let counter2 = Arc::clone(&counter);
-    tokio::spawn(async move {
-        let mut buf = [0u8; 4096];
-        while let Ok((n, peer)) = socket.recv_from(&mut buf).await {
-            counter2.fetch_add(1, Ordering::SeqCst);
-            let resp = respond(&buf[..n]);
-            if !resp.is_empty() {
-                let _ = socket.send_to(&resp, peer).await;
-            }
-        }
-    });
-    (addr, counter)
 }
 
 /// Mock upstream: echoes the query back as a minimal valid response.
@@ -229,28 +171,23 @@ fn nodata_response(query_bytes: &[u8]) -> Vec<u8> {
 
 // ── TCP helpers ───────────────────────────────────────────────────────────────
 
-async fn write_framed(stream: &mut TcpStream, msg: &Message) {
+async fn write_msg(stream: &mut TcpStream, msg: &Message) {
     let bytes = msg.to_bytes().unwrap();
-    stream
-        .write_all(&(bytes.len() as u16).to_be_bytes())
-        .await
-        .unwrap();
-    stream.write_all(&bytes).await.unwrap();
+    net_write_framed(stream, &bytes).await.unwrap();
 }
 
-async fn read_framed(stream: &mut TcpStream) -> Message {
-    let mut len_buf = [0u8; 2];
-    stream.read_exact(&mut len_buf).await.unwrap();
-    let len = u16::from_be_bytes(len_buf) as usize;
-    let mut buf = vec![0u8; len];
-    stream.read_exact(&mut buf).await.unwrap();
-    Message::try_from(buf.as_slice()).unwrap()
+async fn read_msg(stream: &mut TcpStream) -> Message {
+    let body = net_read_framed(stream)
+        .await
+        .unwrap()
+        .expect("stream closed before a complete message arrived");
+    Message::parse(body).unwrap()
 }
 
 async fn tcp_query(addr: SocketAddr, query: &Message) -> Message {
     let mut stream = TcpStream::connect(addr).await.unwrap();
-    write_framed(&mut stream, query).await;
-    read_framed(&mut stream).await
+    write_msg(&mut stream, query).await;
+    read_msg(&mut stream).await
 }
 
 // ── TCP tests ─────────────────────────────────────────────────────────────────
@@ -280,11 +217,11 @@ async fn tcp_pipelining() {
     let q2 = make_query("two.example.com", RecordType::AAAA);
 
     // Send both queries back-to-back before reading any response.
-    write_framed(&mut stream, &q1).await;
-    write_framed(&mut stream, &q2).await;
+    write_msg(&mut stream, &q1).await;
+    write_msg(&mut stream, &q2).await;
 
-    let r1 = read_framed(&mut stream).await;
-    let r2 = read_framed(&mut stream).await;
+    let r1 = read_msg(&mut stream).await;
+    let r2 = read_msg(&mut stream).await;
 
     assert_eq!(r1.header.id, q1.header.id);
     assert_eq!(r2.header.id, q2.header.id);
@@ -532,13 +469,10 @@ async fn edns_version_mismatch_returns_badvers() {
 
     // Build a query with OPT version=1 (unsupported).
     let mut query = make_query("example.com", RecordType::A);
-    query.additional.push(ResourceRecord {
-        name: String::new(),
-        class: Class::from(4096u16),
-        // TTL layout: ext_rcode(8)|version(8)|flags(16); version=1 → 0x00010000
-        ttl: 0x0001_0000,
-        rdata: RData::OPT(Vec::new()),
-    });
+    let mut opt = ResourceRecord::edns_opt(4096);
+    // TTL layout: ext_rcode(8)|version(8)|flags(16); version=1 → 0x00010000
+    opt.ttl = 0x0001_0000;
+    query.additional.push(opt);
     query.header.ar_count = 1;
 
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -571,15 +505,12 @@ async fn edns_options_are_not_forwarded_server_opts_empty() {
     let server = start_server(upstream).await;
 
     let mut query = make_query("example.com", RecordType::A);
-    query.additional.push(ResourceRecord {
-        name: String::new(),
-        class: Class::from(4096u16),
-        ttl: 0,
-        rdata: RData::OPT(vec![EdnsOption {
-            code: 8, // ECS
-            data: bytes::Bytes::from_static(&[0, 1, 24, 0, 192, 168, 1, 0]),
-        }]),
-    });
+    let mut opt = ResourceRecord::edns_opt(4096);
+    opt.rdata = RData::OPT(vec![EdnsOption {
+        code: 8, // ECS
+        data: bytes::Bytes::from_static(&[0, 1, 24, 0, 192, 168, 1, 0]),
+    }]);
+    query.additional.push(opt);
     query.header.ar_count = 1;
 
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();

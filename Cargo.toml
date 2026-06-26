@@ -5,8 +5,9 @@ members = [
     "crates/dnser-server",
     "crates/dnser-resolver",
     "crates/dnser-cache",
-    "crates/dnser-zone",
     "crates/dnser-config",
+    "crates/dnser-net",
+    "crates/dnser-testing",
 ]
 resolver = "2"
 

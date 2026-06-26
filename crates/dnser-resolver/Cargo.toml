@@ -14,11 +14,13 @@ categories = ["network-programming", "asynchronous"]
 
 [dependencies]
 dnser-config = { path = "../dnser-config" }
+dnser-net = { path = "../dnser-net" }
 dnser-proto = { path = "../dnser-proto" }
 bytes = "1"
 futures-util = "0.3"
-tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "net", "rt", "sync", "time"] }
 tracing = "0.1"
 
 [dev-dependencies]
+dnser-testing = { path = "../dnser-testing" }
 tokio = { version = "1", features = ["macros"] }

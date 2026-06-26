@@ -1,3 +1,6 @@
 # dnser-resolver
 
-Recursive DNS resolver and forwarding logic. Given a query, it checks the cache first, then either answers from a local authoritative zone or forwards upstream, following CNAME chains and delegation as needed. Designed to support both full recursive resolution and simple stub/forwarding modes.
+Forwarding DNS resolver. Given a query, it races the request across every configured upstream over UDP and returns the first valid response, dropping later-arriving duplicates and falling through to the next upstream on timeout or transport error. Allocates DNS message IDs per upstream socket and tracks in-flight queries so concurrent requests don't collide.
+
+Does **not** do full recursive resolution (no root-hint following, no NS chasing, no CNAME unwinding) — callers should point it at recursive upstreams.
+</content>

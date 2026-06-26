@@ -54,14 +54,8 @@ struct ExpectRecord {
     soa_serial: Option<u32>,
 }
 
-fn decode_hex(s: &str) -> Vec<u8> {
-    let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    assert!(clean.len() % 2 == 0, "odd-length hex string");
-    (0..clean.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&clean[i..i + 2], 16).unwrap())
-        .collect()
-}
+mod common;
+use common::decode_hex;
 
 fn run_fixture(path: &Path) {
     let source = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));

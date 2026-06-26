@@ -1,4 +1,5 @@
 mod error;
+mod tcp;
 
 pub use error::ResolveError;
 
@@ -16,7 +17,7 @@ use futures_util::stream::FuturesUnordered;
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 struct InFlight {
     map: HashMap<u16, oneshot::Sender<Bytes>>,
@@ -24,6 +25,7 @@ struct InFlight {
 }
 
 struct UpstreamSocket {
+    addr: SocketAddr,
     socket: Arc<UdpSocket>,
     in_flight: Arc<Mutex<InFlight>>,
     recv_abort: AbortHandle,
@@ -64,6 +66,7 @@ impl UpstreamSocket {
             tokio::spawn(recv_loop(Arc::clone(&socket), Arc::clone(&in_flight))).abort_handle();
 
         Ok(Self {
+            addr,
             socket,
             in_flight,
             recv_abort,
@@ -98,6 +101,12 @@ impl UpstreamSocket {
                 let mut msg = Message::parse(response_bytes)?;
                 if !msg.header.is_response() || msg.questions != query.questions {
                     return Err(ResolveError::InvalidResponse);
+                }
+                // RFC 1035 §4.2.1: TC=1 means the answer was truncated to fit UDP.
+                // Re-issue over TCP for the full response.
+                if msg.header.is_truncated() {
+                    debug!(upstream = %self.addr, "udp response truncated, retrying over tcp");
+                    return tcp::tcp_query(self.addr, query, timeout).await;
                 }
                 msg.header.id = original_id;
                 Ok(msg)

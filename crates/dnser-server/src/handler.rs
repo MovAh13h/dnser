@@ -1,5 +1,5 @@
 use dnser_cache::Cache;
-use dnser_proto::{Header, Message, RData, Rcode, ResourceRecord, class::Class};
+use dnser_proto::{Header, Message, RData, Rcode, ResourceRecord};
 use dnser_resolver::Resolver;
 use tracing::{debug, warn};
 
@@ -32,12 +32,9 @@ fn add_edns_opt(response: &mut Message) {
     response
         .additional
         .retain(|rr| !matches!(rr.rdata, RData::OPT(_)));
-    response.additional.push(ResourceRecord {
-        name: String::new(),
-        class: Class::from(SERVER_UDP_PAYLOAD),
-        ttl: 0,
-        rdata: RData::OPT(Vec::new()),
-    });
+    response
+        .additional
+        .push(ResourceRecord::edns_opt(SERVER_UDP_PAYLOAD));
     response.header.ar_count = response.additional.len() as u16;
 }
 
@@ -125,12 +122,9 @@ fn build_badvers(query: &Message) -> Message {
         ..Default::default()
     };
     // TTL layout: ext_rcode(8) | version(8) | z(16). BADVERS = ext_rcode=1.
-    response.additional.push(ResourceRecord {
-        name: String::new(),
-        class: Class::from(SERVER_UDP_PAYLOAD),
-        ttl: 0x0100_0000,
-        rdata: RData::OPT(Vec::new()),
-    });
+    let mut opt = ResourceRecord::edns_opt(SERVER_UDP_PAYLOAD);
+    opt.ttl = 0x0100_0000;
+    response.additional.push(opt);
     response
 }
 
@@ -158,12 +152,7 @@ mod tests {
 
     fn query_with_opt(id: u16, udp_size: u16) -> Message {
         let mut q = query(id, true);
-        q.additional.push(ResourceRecord {
-            name: String::new(),
-            class: Class::from(udp_size),
-            ttl: 0,
-            rdata: RData::OPT(Vec::new()),
-        });
+        q.additional.push(ResourceRecord::edns_opt(udp_size));
         q.header.ar_count = 1;
         q
     }

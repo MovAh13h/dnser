@@ -17,13 +17,8 @@ struct Fixture {
     hex: String,
 }
 
-fn decode_hex(s: &str) -> Vec<u8> {
-    let clean: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    (0..clean.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&clean[i..i + 2], 16).unwrap())
-        .collect()
-}
+mod common;
+use common::decode_hex;
 
 fn check_interop(fixture_file: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
