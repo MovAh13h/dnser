@@ -1,15 +1,22 @@
-use std::collections::HashMap;
-use std::hash::{BuildHasher, Hash};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use dnser_proto::{Message, Question, RData, Rcode, ResourceRecord};
+use hashbrown::{Equivalent, HashMap};
 
 const NUM_SHARDS: usize = 64;
 
+/// Max length of a DNS owner name on the wire (RFC 1035 §3.1). The proto
+/// parser enforces this, so every name reaching the cache fits in a buffer
+/// of this size.
+const MAX_NAME_LEN: usize = 253;
+
 #[derive(Hash, PartialEq, Eq, Clone)]
 struct CacheKey {
+    /// Always stored already lowercased so the derived `Hash`/`Eq` are
+    /// case-insensitive without extra work at compare time.
     name: Box<str>,
     qtype: u16,
     qclass: u16,
@@ -22,6 +29,66 @@ impl CacheKey {
             qtype: q.qtype as u16,
             qclass: u16::from(q.qclass),
         }
+    }
+}
+
+/// Borrowed counterpart to [`CacheKey`] used for allocation-free lookups.
+///
+/// Implements `Hash` to produce *identical* hash output to a `CacheKey`
+/// whose `name` is the lowercased form of `Lookup::name`, by lowercasing
+/// into a stack buffer and then mirroring `str`'s `Hash` impl exactly
+/// (one `write` of the bytes, followed by the 0xff separator). Combined
+/// with [`Equivalent`], this lets us pass `&Lookup` to `HashMap::get`
+/// without allocating a `Box<str>` per lookup.
+struct Lookup<'a> {
+    name: &'a str,
+    qtype: u16,
+    qclass: u16,
+}
+
+impl<'a> Lookup<'a> {
+    fn from_question(q: &'a Question) -> Self {
+        Self {
+            name: &q.name,
+            qtype: q.qtype as u16,
+            qclass: u16::from(q.qclass),
+        }
+    }
+}
+
+impl Hash for Lookup<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Lowercase into a stack buffer, then hash the slice in one call to
+        // exactly match `<str as Hash>::hash` on the already-lowercase name
+        // stored in CacheKey.
+        let bytes = self.name.as_bytes();
+        let mut buf = [0u8; MAX_NAME_LEN];
+        let n = bytes.len().min(MAX_NAME_LEN);
+        for i in 0..n {
+            buf[i] = bytes[i].to_ascii_lowercase();
+        }
+        state.write(&buf[..n]);
+        // Pathological tail (>253 bytes — shouldn't happen for parsed DNS
+        // names, but we stay correct if a test constructs one).
+        for &b in &bytes[n..] {
+            state.write_u8(b.to_ascii_lowercase());
+        }
+        state.write_u8(0xff); // <str as Hash> separator
+        self.qtype.hash(state);
+        self.qclass.hash(state);
+    }
+}
+
+impl Equivalent<CacheKey> for Lookup<'_> {
+    fn equivalent(&self, key: &CacheKey) -> bool {
+        self.qtype == key.qtype
+            && self.qclass == key.qclass
+            && self.name.len() == key.name.len()
+            && self
+                .name
+                .bytes()
+                .zip(key.name.bytes())
+                .all(|(a, b)| a.to_ascii_lowercase() == b)
     }
 }
 
@@ -57,22 +124,28 @@ impl Cache {
         }
     }
 
-    fn shard_index(&self, key: &CacheKey) -> usize {
+    /// Computes the shard index for any value that hashes identically to a
+    /// `CacheKey` (in practice: either a `CacheKey` or a [`Lookup`]).
+    fn shard_index<K: Hash + ?Sized>(&self, key: &K) -> usize {
         self.build_hasher.hash_one(key) as usize & (NUM_SHARDS - 1)
     }
 
     /// Returns a TTL-rewritten clone of the cached response, or `None` on miss/expiry.
+    ///
+    /// Looks the question up via a borrowed [`Lookup`] so the hot path makes
+    /// no allocations — the `Box<str>` lowercase copy that `CacheKey` requires
+    /// is skipped entirely on cache hits and on misses.
     ///
     /// The shard read lock is held only long enough to bump an `Arc` refcount
     /// and read the timestamps; the deep `Message` clone and TTL rewrite both
     /// happen after the lock is released, so concurrent writers (insert and
     /// the reaper) are not blocked by the clone work.
     pub fn get(&self, question: &Question) -> Option<Message> {
-        let key = CacheKey::from_question(question);
+        let lookup = Lookup::from_question(question);
 
         let (arc, elapsed_secs) = {
-            let shard = self.shards[self.shard_index(&key)].read().unwrap();
-            let entry = shard.get(&key)?;
+            let shard = self.shards[self.shard_index(&lookup)].read().unwrap();
+            let entry = shard.get(&lookup)?;
             let now = Instant::now();
             if now >= entry.expires_at {
                 return None;
@@ -332,6 +405,23 @@ mod tests {
         cache.insert(&noerror_response(60));
         cache.force_expire(&question());
         assert!(cache.get(&question()).is_none());
+    }
+
+    #[test]
+    fn lookup_hash_matches_cache_key_hash() {
+        // The whole point of Lookup is that it must hash identically to a
+        // CacheKey whose name is the lowercased form. If this invariant ever
+        // breaks, HashMap::get with Equivalent will silently miss valid hits.
+        use std::collections::hash_map::RandomState;
+        let bh = RandomState::new();
+        let key = CacheKey::from_question(&question());
+        let lookup = Lookup {
+            name: "EXAMPLE.com",
+            qtype: RecordType::A as u16,
+            qclass: u16::from(dnser_proto::Class::IN),
+        };
+        assert_eq!(bh.hash_one(&key), bh.hash_one(&lookup));
+        assert!(lookup.equivalent(&key));
     }
 
     #[test]
