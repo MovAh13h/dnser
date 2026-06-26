@@ -1,5 +1,5 @@
 use dnser_cache::Cache;
-use dnser_proto::{Header, Message, RData, Rcode, ResourceRecord};
+use dnser_proto::{Header, Message, Rcode, ResourceRecord};
 use dnser_resolver::Resolver;
 use tracing::{debug, warn};
 
@@ -9,29 +9,19 @@ pub(crate) const MAX_UDP_PAYLOAD: usize = 512;
 /// Our advertised EDNS UDP payload size.
 const SERVER_UDP_PAYLOAD: u16 = dnser_proto::MAX_UDP_SIZE as u16;
 
-/// Returns the OPT pseudo-RR from the additional section, if present.
-fn find_opt(msg: &Message) -> Option<&ResourceRecord> {
-    msg.additional
-        .iter()
-        .find(|rr| matches!(rr.rdata, RData::OPT(_)))
-}
-
 /// Returns the effective UDP payload limit for a query: the client's advertised
 /// size clamped to [512, MAX_UDP_SIZE], or 512 if no OPT is present.
 pub(crate) fn query_udp_limit(query: &Message) -> usize {
-    find_opt(query)
-        .map(|opt| {
-            let advertised = u16::from(opt.class) as usize;
-            advertised.clamp(MAX_UDP_PAYLOAD, dnser_proto::MAX_UDP_SIZE)
-        })
+    query
+        .opt()
+        .and_then(ResourceRecord::edns_udp_size)
+        .map(|advertised| (advertised as usize).clamp(MAX_UDP_PAYLOAD, dnser_proto::MAX_UDP_SIZE))
         .unwrap_or(MAX_UDP_PAYLOAD)
 }
 
 /// Strips any upstream OPT and appends our own advertising SERVER_UDP_PAYLOAD.
 fn add_edns_opt(response: &mut Message) {
-    response
-        .additional
-        .retain(|rr| !matches!(rr.rdata, RData::OPT(_)));
+    response.additional.retain(|rr| !rr.is_opt());
     response
         .additional
         .push(ResourceRecord::edns_opt(SERVER_UDP_PAYLOAD));
@@ -43,14 +33,13 @@ fn add_edns_opt(response: &mut Message) {
 /// When the query carries an OPT record, the response includes one too.
 pub(crate) async fn process_query(resolver: &Resolver, cache: &Cache, query: &Message) -> Message {
     // EDNS version check — only version 0 is defined (RFC 6891 §6.1.3).
-    if let Some(opt) = find_opt(query) {
-        let version = ((opt.ttl >> 16) & 0xFF) as u8;
-        if version != 0 {
+    if let Some(opt) = query.opt() {
+        if opt.edns_version() != Some(0) {
             return build_badvers(query);
         }
     }
 
-    let has_opt = find_opt(query).is_some();
+    let has_opt = query.opt().is_some();
 
     if let [question] = query.questions.as_slice() {
         if let Some(mut cached) = cache.get(question) {
@@ -82,12 +71,7 @@ pub(crate) async fn process_query(resolver: &Resolver, cache: &Cache, query: &Me
 
 pub(crate) fn build_servfail(query: &Message) -> Message {
     Message {
-        header: Header {
-            id: query.header.id,
-            flags: Header::QR | (Rcode::ServFail as u16) | (query.header.flags & Header::RD),
-            qd_count: query.header.qd_count,
-            ..Default::default()
-        },
+        header: Header::reply_to(&query.header, Rcode::ServFail as u16),
         questions: query.questions.clone(),
         ..Default::default()
     }
@@ -96,12 +80,7 @@ pub(crate) fn build_servfail(query: &Message) -> Message {
 /// Builds a TC=1 response with no answers, telling the client to retry over TCP.
 pub(crate) fn build_truncated(query: &Message) -> Message {
     Message {
-        header: Header {
-            id: query.header.id,
-            flags: Header::QR | Header::TC | (query.header.flags & Header::RD),
-            qd_count: query.header.qd_count,
-            ..Default::default()
-        },
+        header: Header::reply_to(&query.header, Header::TC),
         questions: query.questions.clone(),
         ..Default::default()
     }
@@ -110,22 +89,16 @@ pub(crate) fn build_truncated(query: &Message) -> Message {
 /// Builds a BADVERS response (RFC 6891 §6.1.3).
 /// Header RCODE=0; extended RCODE=1 is encoded in OPT TTL byte 0.
 fn build_badvers(query: &Message) -> Message {
-    let mut response = Message {
-        header: Header {
-            id: query.header.id,
-            flags: Header::QR | (query.header.flags & Header::RD),
-            qd_count: query.header.qd_count,
-            ar_count: 1,
-            ..Default::default()
-        },
-        questions: query.questions.clone(),
-        ..Default::default()
-    };
-    // TTL layout: ext_rcode(8) | version(8) | z(16). BADVERS = ext_rcode=1.
+    let mut header = Header::reply_to(&query.header, 0);
+    header.ar_count = 1;
     let mut opt = ResourceRecord::edns_opt(SERVER_UDP_PAYLOAD);
-    opt.ttl = 0x0100_0000;
-    response.additional.push(opt);
-    response
+    opt.set_edns_extended_rcode(1);
+    Message {
+        header,
+        questions: query.questions.clone(),
+        additional: vec![opt],
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]
@@ -224,12 +197,7 @@ mod tests {
     fn badvers_has_opt_with_extended_rcode_1() {
         let resp = build_badvers(&query(9, true));
         assert!(resp.header.is_response());
-        let opt = resp
-            .additional
-            .iter()
-            .find(|rr| matches!(rr.rdata, RData::OPT(_)))
-            .expect("OPT record must be present in BADVERS");
-        // byte 0 of TTL = extended RCODE = 1
-        assert_eq!(opt.ttl >> 24, 1, "extended RCODE must be BADVERS (1)");
+        let opt = resp.opt().expect("OPT record must be present in BADVERS");
+        assert_eq!(opt.edns_extended_rcode(), Some(1));
     }
 }
