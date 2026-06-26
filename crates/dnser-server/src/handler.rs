@@ -32,14 +32,18 @@ fn add_edns_opt(response: &mut Message) {
 /// Upstream failures produce SERVFAIL rather than propagating an error.
 /// When the query carries an OPT record, the response includes one too.
 pub(crate) async fn process_query(resolver: &Resolver, cache: &Cache, query: &Message) -> Message {
+    // Locate the OPT record once — Option<&ResourceRecord> is Copy so we can
+    // both pattern-match on it and reuse it for the has_opt flag below.
+    let opt = query.opt();
+
     // EDNS version check — only version 0 is defined (RFC 6891 §6.1.3).
-    if let Some(opt) = query.opt() {
-        if opt.edns_version() != Some(0) {
+    if let Some(o) = opt {
+        if o.edns_version() != Some(0) {
             return build_badvers(query);
         }
     }
 
-    let has_opt = query.opt().is_some();
+    let has_opt = opt.is_some();
 
     if let [question] = query.questions.as_slice() {
         if let Some(mut cached) = cache.get(question) {
