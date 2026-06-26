@@ -17,6 +17,7 @@ pub const DEFAULT_PORT: u16 = 1053;
 /// shutdown_drain_secs    = 5
 /// tcp_idle_timeout_secs  = 10
 /// tcp_max_connections    = 1000
+/// udp_max_inflight       = 1000
 /// ```
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -44,6 +45,11 @@ pub struct ServerConfig {
     /// Maximum number of simultaneous TCP connections. Excess connections are dropped
     /// immediately. Defaults to `1000`.
     pub tcp_max_connections: usize,
+
+    /// Maximum number of UDP queries that may be in flight across all workers at once.
+    /// Excess datagrams are dropped on arrival, providing backpressure against floods
+    /// that would otherwise spawn unbounded resolver tasks. Defaults to `1000`.
+    pub udp_max_inflight: usize,
 }
 
 impl Default for ServerConfig {
@@ -55,6 +61,7 @@ impl Default for ServerConfig {
             shutdown_drain_secs: 5,
             tcp_idle_timeout_secs: 10,
             tcp_max_connections: 1000,
+            udp_max_inflight: 1000,
         }
     }
 }

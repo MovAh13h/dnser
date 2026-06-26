@@ -8,7 +8,7 @@ use dnser_proto::MAX_UDP_SIZE;
 use dnser_resolver::Resolver;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
-use tokio::sync::watch;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
@@ -22,6 +22,7 @@ pub(crate) struct Worker {
     cache: Arc<Cache>,
     shutdown: watch::Receiver<bool>,
     drain_timeout: Duration,
+    inflight: Arc<Semaphore>,
 }
 
 impl Worker {
@@ -32,6 +33,7 @@ impl Worker {
         cache: Arc<Cache>,
         shutdown: watch::Receiver<bool>,
         drain_timeout: Duration,
+        inflight: Arc<Semaphore>,
     ) -> Result<Self, std::io::Error> {
         let domain = Domain::for_address(addr);
         let sock = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
@@ -46,6 +48,7 @@ impl Worker {
             cache,
             shutdown,
             drain_timeout,
+            inflight,
         })
     }
 
@@ -62,12 +65,19 @@ impl Worker {
                 result = self.socket.recv_from(&mut buf) => {
                     match result {
                         Ok((len, peer)) => {
+                            let permit = match Arc::clone(&self.inflight).try_acquire_owned() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    warn!(worker = self.id, peer = %peer, "udp inflight limit reached, dropping");
+                                    continue;
+                                }
+                            };
                             let data = Bytes::copy_from_slice(&buf[..len]);
                             let socket = Arc::clone(&self.socket);
                             let resolver = Arc::clone(&self.resolver);
                             let cache = Arc::clone(&self.cache);
                             queries.spawn(async move {
-                                if let Err(e) = handle_query(&socket, &resolver, &cache, data, peer).await {
+                                if let Err(e) = handle_query(&socket, &resolver, &cache, data, peer, permit).await {
                                     warn!(peer = %peer, err = %e, "query error");
                                 }
                             });
@@ -109,6 +119,7 @@ async fn handle_query(
     cache: &Cache,
     data: Bytes,
     peer: SocketAddr,
+    _permit: OwnedSemaphorePermit,
 ) -> Result<(), QueryError> {
     let query = dnser_proto::Message::parse(data)?;
     debug!(id = query.header.id, peer = %peer, "udp query");

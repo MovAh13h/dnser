@@ -35,6 +35,9 @@ impl Config {
         if self.server.tcp_max_connections == 0 {
             return Err(ConfigError::ZeroTcpMaxConnections);
         }
+        if self.server.udp_max_inflight == 0 {
+            return Err(ConfigError::ZeroUdpMaxInflight);
+        }
         if self.cache.max_entries == 0 {
             return Err(ConfigError::ZeroCacheCapacity);
         }
