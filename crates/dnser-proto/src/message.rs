@@ -77,6 +77,13 @@ impl Message {
     pub fn to_bytes_mut(&self) -> Result<BytesMut, WriteError> {
         Ok(self.build_writer()?.into_inner())
     }
+
+    /// Returns the first OPT pseudo-RR in the additional section, if any.
+    /// EDNS(0) permits at most one OPT per message (RFC 6891 §6.1.1).
+    #[must_use]
+    pub fn opt(&self) -> Option<&ResourceRecord> {
+        self.additional.iter().find(|rr| rr.is_opt())
+    }
 }
 
 impl TryFrom<Bytes> for Message {

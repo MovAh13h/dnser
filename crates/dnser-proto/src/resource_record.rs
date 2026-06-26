@@ -27,6 +27,46 @@ impl ResourceRecord {
         }
     }
 
+    /// True if this is an EDNS(0) OPT pseudo-RR.
+    #[must_use]
+    pub fn is_opt(&self) -> bool {
+        matches!(self.rdata, RData::OPT(_))
+    }
+
+    /// Returns the requestor's advertised UDP payload size for an OPT record
+    /// (RFC 6891 §6.1.2 — stored in the CLASS field). `None` if not OPT.
+    #[must_use]
+    pub fn edns_udp_size(&self) -> Option<u16> {
+        self.is_opt().then(|| u16::from(self.class))
+    }
+
+    /// Returns the EDNS extended RCODE — byte 0 of the OPT TTL.
+    /// `None` if not OPT.
+    #[must_use]
+    pub fn edns_extended_rcode(&self) -> Option<u8> {
+        self.is_opt().then(|| ((self.ttl >> 24) & 0xFF) as u8)
+    }
+
+    /// Returns the EDNS version — byte 1 of the OPT TTL. `None` if not OPT.
+    #[must_use]
+    pub fn edns_version(&self) -> Option<u8> {
+        self.is_opt().then(|| ((self.ttl >> 16) & 0xFF) as u8)
+    }
+
+    /// Sets the extended RCODE byte of an OPT record's TTL. No-op on non-OPT.
+    pub fn set_edns_extended_rcode(&mut self, ext_rcode: u8) {
+        if self.is_opt() {
+            self.ttl = (self.ttl & 0x00FF_FFFF) | (u32::from(ext_rcode) << 24);
+        }
+    }
+
+    /// Sets the EDNS version byte of an OPT record's TTL. No-op on non-OPT.
+    pub fn set_edns_version(&mut self, version: u8) {
+        if self.is_opt() {
+            self.ttl = (self.ttl & 0xFF00_FFFF) | (u32::from(version) << 16);
+        }
+    }
+
     fn record_type(&self) -> Result<RecordType, u16> {
         match &self.rdata {
             RData::A(_) => Ok(RecordType::A),
@@ -120,6 +160,50 @@ mod tests {
         assert_eq!(opt.ttl, 0);
         assert_eq!(opt.rdata, RData::OPT(Vec::new()));
         assert_eq!(opt.record_type(), Ok(RecordType::OPT));
+    }
+
+    #[test]
+    fn edns_accessors_return_none_on_non_opt() {
+        let rr = record(RData::A(Ipv4Addr::LOCALHOST));
+        assert!(!rr.is_opt());
+        assert_eq!(rr.edns_udp_size(), None);
+        assert_eq!(rr.edns_extended_rcode(), None);
+        assert_eq!(rr.edns_version(), None);
+    }
+
+    #[test]
+    fn edns_accessors_decode_ttl_bytes() {
+        let mut opt = ResourceRecord::edns_opt(4096);
+        // ext_rcode = 0x12, version = 0x34, flags = 0x5678
+        opt.ttl = 0x1234_5678;
+        assert_eq!(opt.edns_udp_size(), Some(4096));
+        assert_eq!(opt.edns_extended_rcode(), Some(0x12));
+        assert_eq!(opt.edns_version(), Some(0x34));
+    }
+
+    #[test]
+    fn set_edns_extended_rcode_only_touches_top_byte() {
+        let mut opt = ResourceRecord::edns_opt(4096);
+        opt.ttl = 0x0034_5678;
+        opt.set_edns_extended_rcode(0xAB);
+        assert_eq!(opt.ttl, 0xAB34_5678);
+    }
+
+    #[test]
+    fn set_edns_version_only_touches_second_byte() {
+        let mut opt = ResourceRecord::edns_opt(4096);
+        opt.ttl = 0xAB00_5678;
+        opt.set_edns_version(0x42);
+        assert_eq!(opt.ttl, 0xAB42_5678);
+    }
+
+    #[test]
+    fn set_edns_setters_noop_on_non_opt() {
+        let mut rr = record(RData::A(Ipv4Addr::LOCALHOST));
+        let before = rr.ttl;
+        rr.set_edns_extended_rcode(1);
+        rr.set_edns_version(2);
+        assert_eq!(rr.ttl, before);
     }
 
     #[test]

@@ -66,6 +66,20 @@ impl Header {
         Rcode::try_from((self.flags & Self::RCODE) as u8)
     }
 
+    /// Builds a response header for `query`: same id, same qd_count, preserves
+    /// the RD bit, sets QR plus any caller-supplied `extra_flags` (e.g. TC,
+    /// an rcode, RA). The section counts default to zero — the caller fills
+    /// `an_count`/`ns_count`/`ar_count` to match the sections it appends.
+    #[must_use]
+    pub fn reply_to(query: &Header, extra_flags: u16) -> Self {
+        Self {
+            id: query.id,
+            flags: Self::QR | extra_flags | (query.flags & Self::RD),
+            qd_count: query.qd_count,
+            ..Default::default()
+        }
+    }
+
     pub fn parse(r: &mut Reader) -> Result<Self, ParseError> {
         let id = r.read_u16()?;
         let flags = r.read_u16()?;
@@ -142,6 +156,39 @@ mod tests {
         for &(flags, accessor) in cases {
             assert!(accessor(&header(flags)));
         }
+    }
+
+    #[test]
+    fn reply_to_sets_qr_copies_id_and_qd_count() {
+        let mut query = header(0);
+        query.id = 0xABCD;
+        query.qd_count = 1;
+        let resp = Header::reply_to(&query, 0);
+        assert!(resp.is_response());
+        assert_eq!(resp.id, 0xABCD);
+        assert_eq!(resp.qd_count, 1);
+    }
+
+    #[test]
+    fn reply_to_preserves_rd_bit() {
+        assert!(Header::reply_to(&header(Header::RD), 0).recursion_desired());
+        assert!(!Header::reply_to(&header(0), 0).recursion_desired());
+    }
+
+    #[test]
+    fn reply_to_ors_extra_flags() {
+        let resp = Header::reply_to(&header(Header::RD), Header::TC | Header::RA);
+        assert!(resp.is_truncated());
+        assert!(resp.recursion_available());
+        assert!(resp.recursion_desired());
+    }
+
+    #[test]
+    fn reply_to_does_not_leak_other_query_flags() {
+        // CD on the query must NOT appear on the reply — only RD is forwarded.
+        let resp = Header::reply_to(&header(Header::CD | Header::RD), 0);
+        assert!(!resp.checking_disabled());
+        assert!(resp.recursion_desired());
     }
 
     #[test]
