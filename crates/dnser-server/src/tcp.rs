@@ -12,6 +12,13 @@ use tracing::{debug, warn};
 use crate::error::QueryError;
 use crate::handler::process_query;
 
+/// Binds a single non-blocking TCP listener.
+pub(crate) fn bind_tcp_listener(addr: SocketAddr) -> std::io::Result<TcpListener> {
+    let std_listener = std::net::TcpListener::bind(addr)?;
+    std_listener.set_nonblocking(true)?;
+    TcpListener::from_std(std_listener)
+}
+
 pub(crate) struct TcpWorker {
     listener: TcpListener,
     resolver: Arc<Resolver>,
@@ -22,29 +29,22 @@ pub(crate) struct TcpWorker {
 }
 
 impl TcpWorker {
-    pub(crate) fn bind(
-        addr: SocketAddr,
+    pub(crate) fn new(
+        listener: TcpListener,
         resolver: Arc<Resolver>,
         cache: Arc<Cache>,
         shutdown: watch::Receiver<bool>,
         idle_timeout: Duration,
         connection_limit: Arc<Semaphore>,
-    ) -> Result<Self, std::io::Error> {
-        let std_listener = std::net::TcpListener::bind(addr)?;
-        std_listener.set_nonblocking(true)?;
-        let listener = TcpListener::from_std(std_listener)?;
-        Ok(Self {
+    ) -> Self {
+        Self {
             listener,
             resolver,
             cache,
             shutdown,
             idle_timeout,
             connection_limit,
-        })
-    }
-
-    pub(crate) fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.listener.local_addr()
+        }
     }
 
     pub(crate) async fn run(mut self) {

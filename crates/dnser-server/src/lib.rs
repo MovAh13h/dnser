@@ -14,8 +14,9 @@ use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinHandle;
 use tracing::info;
 
-use tcp::TcpWorker;
-use worker::Worker;
+use tcp::{TcpWorker, bind_tcp_listener};
+use tokio::net::UdpSocket;
+use worker::{Worker, bind_udp_socket};
 
 /// Handle to a running server. Call [`ServerHandle::shutdown`] to stop it.
 pub struct ServerHandle {
@@ -69,35 +70,34 @@ pub async fn start(config: Config) -> Result<ServerHandle, std::io::Error> {
         }
     });
 
+    let (udp_addr, udp_sockets) = bind_udp_sockets(server_cfg.listen, num_workers)?;
+    let tcp_listener = bind_tcp_listener(server_cfg.listen)?;
+    let tcp_addr = tcp_listener.local_addr()?;
+
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut handles = Vec::with_capacity(num_workers + 1);
 
-    let workers: Vec<Worker> = (0..num_workers)
-        .map(|id| {
-            Worker::bind(
-                id,
-                server_cfg.listen,
-                Arc::clone(&resolver),
-                Arc::clone(&cache),
-                shutdown_rx.clone(),
-                drain_timeout,
-                Arc::clone(&udp_inflight),
-            )
-        })
-        .collect::<Result<_, _>>()?;
-    // Pre-spawn lookup so we can report the kernel-assigned port (listen = :0 in tests).
-    let udp_addr = workers[0].local_addr()?;
-    handles.extend(workers.into_iter().map(|w| tokio::spawn(w.run())));
+    for (id, socket) in udp_sockets.into_iter().enumerate() {
+        let worker = Worker::new(
+            id,
+            socket,
+            Arc::clone(&resolver),
+            Arc::clone(&cache),
+            shutdown_rx.clone(),
+            drain_timeout,
+            Arc::clone(&udp_inflight),
+        );
+        handles.push(tokio::spawn(worker.run()));
+    }
 
-    let tcp_worker = TcpWorker::bind(
-        server_cfg.listen,
+    let tcp_worker = TcpWorker::new(
+        tcp_listener,
         Arc::clone(&resolver),
         Arc::clone(&cache),
         shutdown_rx,
         idle_timeout,
         tcp_connections,
-    )?;
-    let tcp_addr = tcp_worker.local_addr()?;
+    );
     handles.push(tokio::spawn(tcp_worker.run()));
 
     info!(udp = %udp_addr, tcp = %tcp_addr, workers = num_workers, "DNS server listening");
@@ -109,6 +109,27 @@ pub async fn start(config: Config) -> Result<ServerHandle, std::io::Error> {
         handles,
         reaper,
     })
+}
+
+/// Binds `count` UDP sockets that all share one port via `SO_REUSEPORT`.
+///
+/// The first bind uses the caller's `listen` address, which is the only one
+/// that may carry a port of `0`. Its kernel-assigned port is then threaded
+/// into the remaining binds so every socket lands on the *same* port — both
+/// for the resolved address we return and for `SO_REUSEPORT` load-spreading
+/// to work at all.
+fn bind_udp_sockets(
+    listen: SocketAddr,
+    count: usize,
+) -> Result<(SocketAddr, Vec<UdpSocket>), std::io::Error> {
+    let mut sockets = Vec::with_capacity(count);
+    let first = bind_udp_socket(listen)?;
+    let resolved = first.local_addr()?;
+    sockets.push(first);
+    for _ in 1..count {
+        sockets.push(bind_udp_socket(resolved)?);
+    }
+    Ok((resolved, sockets))
 }
 
 /// Runs the server until a shutdown signal (Ctrl-C / SIGTERM) is received.

@@ -15,6 +15,17 @@ use tracing::{debug, warn};
 use crate::error::QueryError;
 use crate::handler::{build_truncated, process_query, query_udp_limit};
 
+/// Binds a single non-blocking UDP socket with `SO_REUSEPORT` set so the kernel
+/// can spray datagrams across siblings bound to the same address.
+pub(crate) fn bind_udp_socket(addr: SocketAddr) -> std::io::Result<UdpSocket> {
+    let domain = Domain::for_address(addr);
+    let sock = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+    sock.set_reuse_port(true)?;
+    sock.set_nonblocking(true)?;
+    sock.bind(&addr.into())?;
+    UdpSocket::from_std(sock.into())
+}
+
 pub(crate) struct Worker {
     id: usize,
     socket: Arc<UdpSocket>,
@@ -26,34 +37,24 @@ pub(crate) struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn bind(
+    pub(crate) fn new(
         id: usize,
-        addr: SocketAddr,
+        socket: UdpSocket,
         resolver: Arc<Resolver>,
         cache: Arc<Cache>,
         shutdown: watch::Receiver<bool>,
         drain_timeout: Duration,
         inflight: Arc<Semaphore>,
-    ) -> Result<Self, std::io::Error> {
-        let domain = Domain::for_address(addr);
-        let sock = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-        sock.set_reuse_port(true)?;
-        sock.set_nonblocking(true)?;
-        sock.bind(&addr.into())?;
-        let socket = Arc::new(UdpSocket::from_std(sock.into())?);
-        Ok(Self {
+    ) -> Self {
+        Self {
             id,
-            socket,
+            socket: Arc::new(socket),
             resolver,
             cache,
             shutdown,
             drain_timeout,
             inflight,
-        })
-    }
-
-    pub(crate) fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.socket.local_addr()
+        }
     }
 
     pub(crate) async fn run(mut self) {
