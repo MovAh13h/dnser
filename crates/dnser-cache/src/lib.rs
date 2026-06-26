@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -26,7 +26,7 @@ impl CacheKey {
 }
 
 struct CacheEntry {
-    response: Message,
+    response: Arc<Message>,
     inserted_at: Instant,
     expires_at: Instant,
 }
@@ -63,25 +63,28 @@ impl Cache {
 
     /// Returns a TTL-rewritten clone of the cached response, or `None` on miss/expiry.
     ///
-    /// The shard read lock is released before TTL rewriting so concurrent readers on
-    /// other keys are not blocked by the clone work.
+    /// The shard read lock is held only long enough to bump an `Arc` refcount
+    /// and read the timestamps; the deep `Message` clone and TTL rewrite both
+    /// happen after the lock is released, so concurrent writers (insert and
+    /// the reaper) are not blocked by the clone work.
     pub fn get(&self, question: &Question) -> Option<Message> {
         let key = CacheKey::from_question(question);
-        let shard = self.shards[self.shard_index(&key)].read().unwrap();
-        let entry = shard.get(&key)?;
 
-        let now = Instant::now();
-        if now >= entry.expires_at {
-            return None;
-        }
+        let (arc, elapsed_secs) = {
+            let shard = self.shards[self.shard_index(&key)].read().unwrap();
+            let entry = shard.get(&key)?;
+            let now = Instant::now();
+            if now >= entry.expires_at {
+                return None;
+            }
+            let elapsed = now
+                .duration_since(entry.inserted_at)
+                .as_secs()
+                .min(u64::from(u32::MAX)) as u32;
+            (Arc::clone(&entry.response), elapsed)
+        };
 
-        let elapsed_secs = now
-            .duration_since(entry.inserted_at)
-            .as_secs()
-            .min(u64::from(u32::MAX)) as u32;
-        let mut response = entry.response.clone();
-        drop(shard); // release read lock before doing any work
-
+        let mut response = (*arc).clone();
         rewrite_ttls(&mut response.answers, elapsed_secs);
         rewrite_ttls(&mut response.authority, elapsed_secs);
         rewrite_ttls(&mut response.additional, elapsed_secs);
@@ -133,9 +136,11 @@ impl Cache {
 
         // Build the entry — including the deep response clone — outside the
         // write lock to minimise lock-hold time and unblock concurrent readers.
+        // The response is wrapped in an Arc so cache hits clone only a refcount
+        // under the read lock; the deep Message clone then happens lock-free.
         let now = Instant::now();
         let entry = CacheEntry {
-            response: response.clone(),
+            response: Arc::new(response.clone()),
             inserted_at: now,
             expires_at: now + Duration::from_secs(u64::from(ttl)),
         };
