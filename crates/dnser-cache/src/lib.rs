@@ -131,32 +131,6 @@ impl Cache {
         let key = CacheKey::from_question(question);
         let shard_i = self.shard_index(&key);
 
-        // Global capacity enforcement. We never hold two shard locks simultaneously,
-        // so there is no deadlock risk.
-        if self.len.load(Ordering::Relaxed) >= self.capacity {
-            let now = Instant::now();
-            let mut evicted = {
-                let mut shard = self.shards[shard_i].write().unwrap();
-                evict_one(&mut shard, now)
-            };
-            if !evicted {
-                // Target shard was empty; scan other shards for something to evict.
-                for (i, other) in self.shards.iter().enumerate() {
-                    if i == shard_i {
-                        continue;
-                    }
-                    let mut s = other.write().unwrap();
-                    if evict_one(&mut s, now) {
-                        evicted = true;
-                        break;
-                    }
-                }
-            }
-            if evicted {
-                self.len.fetch_sub(1, Ordering::Relaxed);
-            }
-        }
-
         // Build the entry — including the deep response clone — outside the
         // write lock to minimise lock-hold time and unblock concurrent readers.
         let now = Instant::now();
@@ -167,6 +141,34 @@ impl Cache {
         };
 
         let mut shard = self.shards[shard_i].write().unwrap();
+
+        // Capacity enforcement: in the common case the target shard has
+        // entries we can evict, so we keep the same write lock we're about
+        // to use for the insert. Only when the target shard is empty do we
+        // drop and scan other shards.
+        if self.len.load(Ordering::Relaxed) >= self.capacity {
+            if evict_one(&mut shard, now) {
+                self.len.fetch_sub(1, Ordering::Relaxed);
+            } else {
+                drop(shard);
+                let mut evicted = false;
+                for (i, other) in self.shards.iter().enumerate() {
+                    if i == shard_i {
+                        continue;
+                    }
+                    let mut s = other.write().unwrap();
+                    if evict_one(&mut s, now) {
+                        evicted = true;
+                        break;
+                    }
+                }
+                if evicted {
+                    self.len.fetch_sub(1, Ordering::Relaxed);
+                }
+                shard = self.shards[shard_i].write().unwrap();
+            }
+        }
+
         let is_new = shard.insert(key, entry).is_none();
         drop(shard);
 
