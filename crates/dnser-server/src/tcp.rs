@@ -28,7 +28,7 @@ impl TcpWorker {
         cache: Arc<Cache>,
         shutdown: watch::Receiver<bool>,
         idle_timeout: Duration,
-        max_connections: usize,
+        connection_limit: Arc<Semaphore>,
     ) -> Result<Self, std::io::Error> {
         let std_listener = std::net::TcpListener::bind(addr)?;
         std_listener.set_nonblocking(true)?;
@@ -39,7 +39,7 @@ impl TcpWorker {
             cache,
             shutdown,
             idle_timeout,
-            connection_limit: Arc::new(Semaphore::new(max_connections)),
+            connection_limit,
         })
     }
 

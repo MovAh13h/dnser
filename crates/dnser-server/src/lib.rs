@@ -49,8 +49,8 @@ pub async fn start(config: Config) -> Result<ServerHandle, std::io::Error> {
     let num_workers = server_cfg.workers;
     let drain_timeout = Duration::from_secs(server_cfg.shutdown_drain_secs);
     let idle_timeout = Duration::from_secs(server_cfg.tcp_idle_timeout_secs);
-    let max_connections = server_cfg.tcp_max_connections;
     let udp_inflight = Arc::new(Semaphore::new(server_cfg.udp_max_inflight));
+    let tcp_connections = Arc::new(Semaphore::new(server_cfg.tcp_max_connections));
 
     let resolver = Arc::new(Resolver::new(config.resolver).await?);
     let cache = Arc::new(Cache::new(
@@ -104,7 +104,7 @@ pub async fn start(config: Config) -> Result<ServerHandle, std::io::Error> {
         Arc::clone(&cache),
         shutdown_rx,
         idle_timeout,
-        max_connections,
+        tcp_connections,
     )?;
     let tcp_addr = tcp_worker.local_addr()?;
     handles.push(tokio::spawn(tcp_worker.run()));
