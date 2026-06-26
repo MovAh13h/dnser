@@ -72,31 +72,22 @@ pub async fn start(config: Config) -> Result<ServerHandle, std::io::Error> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut handles = Vec::with_capacity(num_workers + 1);
 
-    // Bind the first worker to learn the actual UDP address (relevant when port = 0).
-    let first_worker = Worker::bind(
-        0,
-        server_cfg.listen,
-        Arc::clone(&resolver),
-        Arc::clone(&cache),
-        shutdown_rx.clone(),
-        drain_timeout,
-        Arc::clone(&udp_inflight),
-    )?;
-    let udp_addr = first_worker.local_addr()?;
-    handles.push(tokio::spawn(first_worker.run()));
-
-    for id in 1..num_workers {
-        let w = Worker::bind(
-            id,
-            server_cfg.listen,
-            Arc::clone(&resolver),
-            Arc::clone(&cache),
-            shutdown_rx.clone(),
-            drain_timeout,
-            Arc::clone(&udp_inflight),
-        )?;
-        handles.push(tokio::spawn(w.run()));
-    }
+    let workers: Vec<Worker> = (0..num_workers)
+        .map(|id| {
+            Worker::bind(
+                id,
+                server_cfg.listen,
+                Arc::clone(&resolver),
+                Arc::clone(&cache),
+                shutdown_rx.clone(),
+                drain_timeout,
+                Arc::clone(&udp_inflight),
+            )
+        })
+        .collect::<Result<_, _>>()?;
+    // Pre-spawn lookup so we can report the kernel-assigned port (listen = :0 in tests).
+    let udp_addr = workers[0].local_addr()?;
+    handles.extend(workers.into_iter().map(|w| tokio::spawn(w.run())));
 
     let tcp_worker = TcpWorker::bind(
         server_cfg.listen,
