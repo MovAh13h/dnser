@@ -1,6 +1,6 @@
 # dnser-config
 
-Configuration loading for [dnser](https://github.com/MovAh13h/dnser). Reads a TOML file at startup, falls back to built-in defaults when no file is given, and exposes strongly-typed, read-only structs to the rest of the application.
+TOML configuration loader for [dnser](../../). Reads a config file at startup (or skips file I/O entirely with `None`), validates it, and exposes strongly-typed, read-only structs to the rest of the application.
 
 ## Usage
 
@@ -19,11 +19,11 @@ start_server(&config.server);
 
 ## Config file
 
-The config file is TOML. Every field is optional — omitting a section or field falls back to its built-in default.
+The file is TOML. Every section and every field is optional — anything you omit falls back to its built-in default. See the [root README](../../README.md) for the complete reference; a minimal example:
 
 ```toml
 [server]
-listen  = ["0.0.0.0:1053"]
+listen  = "0.0.0.0:1053"
 workers = 4
 
 [logging]
@@ -33,8 +33,8 @@ format = "pretty"
 
 ## Errors
 
-`load()` returns a `ConfigError` in three situations:
+`load()` returns a `ConfigError` for:
 
-- The file path was given but cannot be read (`ConfigError::Io`)
-- The file is not valid TOML or a field has the wrong type (`ConfigError::Parse`)
-- A value is structurally valid but semantically wrong, e.g. an empty listener list (`ConfigError::EmptyListen`, `ConfigError::ZeroWorkers`)
+- File I/O failure (`ConfigError::Io`)
+- Malformed TOML or wrong field types (`ConfigError::Parse`)
+- Semantically invalid values, e.g. zero workers / zero capacity (`ConfigError::ZeroWorkers`, `ConfigError::ZeroCacheCapacity`, etc.)
